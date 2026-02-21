@@ -37,6 +37,17 @@ make bench-stress
 
 This compares `build/libargile_bench.so` vs `build/libclay_bench.so` and prints a final performance table.
 
+## Layout Parity Harness
+
+```bash
+make build-parity
+make parity-quick
+make parity
+make parity-stress
+```
+
+This compares per-element layout boxes (by ID) between `build/libargile_parity.so` and `build/libclay_parity.so` using tolerance-based geometry checks, then prints a full scenario comparison table and mismatch diagnostics.
+
 ## Love2D Demo
 
 ```bash
@@ -58,3 +69,4 @@ The demo uses the main Argile library (`libargile.so`) and stable FFI API (`argi
 - `src/builder.t`: compile-time Lua table to Terra AST builder (`ui.compile`).
 - `tools/build_argile.t`: builds shared library and generates LuaJIT `ffi.cdef`.
 - `tools/build_bench.sh`: builds benchmark backends.
+- `tools/build_parity.sh`: builds parity backends and generated parity FFI cdefs.

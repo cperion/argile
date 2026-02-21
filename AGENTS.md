@@ -16,6 +16,8 @@ Default workflow:
 - `make test`: run all Terra tests.
 - `make build-bench`: build Argile and Clay benchmark libraries.
 - `make bench`, `make bench-quick`, `make bench-stress`: run benchmark profiles.
+- `make build-parity`: build Argile/Clay parity libraries + FFI bindings.
+- `make parity`, `make parity-quick`, `make parity-stress`: run tolerance-based layout parity checks.
 - `make love-demo`: run the Love2D demo.
 - `rg "pattern" src tests tools`: fast code search.
 
@@ -32,6 +34,9 @@ Default workflow:
 - Keep benchmark scenarios equivalent in both backends:
   - Argile: `tools/terra_bench_api.t`
   - Clay: `tools/clay_bench.c`
+- Keep parity scenarios equivalent in both backends:
+  - Argile: `tools/terra_parity_api.t`
+  - Clay: `tools/clay_parity.c`
 - Keep exported benchmark function signatures identical across both libraries.
 - Treat benchmark checksums as backend-internal consistency checks; compare performance metrics in the final table.
 - For FFI-facing changes, rebuild (`make build`) and sanity-check generated signatures in `build/argile_api_ffi.lua`.

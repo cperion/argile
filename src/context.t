@@ -808,6 +808,20 @@ terra ui.Context:closeElement()
     
     var leftRightPadding: float = [float](layoutCfg.padding.left + layoutCfg.padding.right)
     var topBottomPadding: float = [float](layoutCfg.padding.top + layoutCfg.padding.bottom)
+    var elementHasClipHorizontal = false
+    var elementHasClipVertical = false
+    var cfgIdx: int32 = 0
+    while cfgIdx < openElem.elementConfigs.length do
+        if openElem.elementConfigs.internalArray ~= nil then
+            var cfg = &openElem.elementConfigs.internalArray[cfgIdx]
+            if cfg.configType == config.CONFIG_CLIP and cfg.config.clipConfig ~= nil then
+                elementHasClipHorizontal = cfg.config.clipConfig.horizontal
+                elementHasClipVertical = cfg.config.clipConfig.vertical
+                break
+            end
+        end
+        cfgIdx = cfgIdx + 1
+    end
     
     openElem.childrenOrTextContent.children.elements = 
         [&int32](&self.layoutElementChildren.internalArray[0]) + self.layoutElementChildren.length
@@ -827,15 +841,21 @@ terra ui.Context:closeElement()
             if child ~= nil then
                 openElem.dimensions.width = openElem.dimensions.width + child.dimensions.width
                 openElem.dimensions.height = max_f(openElem.dimensions.height, child.dimensions.height + topBottomPadding)
-                openElem.minDimensions.width = openElem.minDimensions.width + child.minDimensions.width
-                openElem.minDimensions.height = max_f(openElem.minDimensions.height, child.minDimensions.height + topBottomPadding)
+                if not elementHasClipHorizontal then
+                    openElem.minDimensions.width = openElem.minDimensions.width + child.minDimensions.width
+                end
+                if not elementHasClipVertical then
+                    openElem.minDimensions.height = max_f(openElem.minDimensions.height, child.minDimensions.height + topBottomPadding)
+                end
             end
             self.layoutElementChildren:add(childIdx)
         end
         
         var childGap: float = [float](max_i(childCount - 1, 0) * layoutCfg.childGap)
         openElem.dimensions.width = openElem.dimensions.width + childGap
-        openElem.minDimensions.width = openElem.minDimensions.width + childGap
+        if not elementHasClipHorizontal then
+            openElem.minDimensions.width = openElem.minDimensions.width + childGap
+        end
         
     else
         openElem.dimensions.height = topBottomPadding
@@ -850,15 +870,21 @@ terra ui.Context:closeElement()
             if child ~= nil then
                 openElem.dimensions.height = openElem.dimensions.height + child.dimensions.height
                 openElem.dimensions.width = max_f(openElem.dimensions.width, child.dimensions.width + leftRightPadding)
-                openElem.minDimensions.height = openElem.minDimensions.height + child.minDimensions.height
-                openElem.minDimensions.width = max_f(openElem.minDimensions.width, child.minDimensions.width + leftRightPadding)
+                if not elementHasClipVertical then
+                    openElem.minDimensions.height = openElem.minDimensions.height + child.minDimensions.height
+                end
+                if not elementHasClipHorizontal then
+                    openElem.minDimensions.width = max_f(openElem.minDimensions.width, child.minDimensions.width + leftRightPadding)
+                end
             end
             self.layoutElementChildren:add(childIdx)
         end
         
         var childGap: float = [float](max_i(childCount - 1, 0) * layoutCfg.childGap)
         openElem.dimensions.height = openElem.dimensions.height + childGap
-        openElem.minDimensions.height = openElem.minDimensions.height + childGap
+        if not elementHasClipVertical then
+            openElem.minDimensions.height = openElem.minDimensions.height + childGap
+        end
     end
     
     self.layoutElementChildrenBuffer.length = self.layoutElementChildrenBuffer.length - childCount
@@ -1123,18 +1149,21 @@ terra ui.Context:openTextElement(text: config.String, textConfig: &config.TextCo
     if added ~= nil then
         added.childrenOrTextContent.textElementData = textDataPtr
         self:registerElementId(added.id, idx)
+        var textMinWidth: float = 0
         
         if textConfig ~= nil then
             if ui.measureTextFunction ~= nil then
                 var cached = self:measureTextCached(&text, textConfig)
                 if cached ~= nil then
                     textData.preferredDimensions = cached.unwrappedDimensions
+                    textMinWidth = cached.minWidth
                 else
                     var slice: string_mod.StringSlice
                     slice.length = text.length
                     slice.chars = text.chars
                     slice.baseChars = text.chars
                     textData.preferredDimensions = ui.measureTextFunction(slice, textConfig, ui.measureTextUserData)
+                    textMinWidth = textData.preferredDimensions.width
                 end
 
                 var wrappedLine: layout.WrappedTextLine
@@ -1145,6 +1174,8 @@ terra ui.Context:openTextElement(text: config.String, textConfig: &config.TextCo
                     textData.wrappedLines.internalArray = wrappedLinePtr
                     textData.wrappedLines.length = 1
                 end
+            else
+                textMinWidth = textData.preferredDimensions.width
             end
             @textDataPtr = textData
 
@@ -1156,7 +1187,7 @@ terra ui.Context:openTextElement(text: config.String, textConfig: &config.TextCo
                 textDimensions.height = textData.preferredDimensions.height
             end
             added.dimensions = textDimensions
-            added.minDimensions.width = textData.preferredDimensions.width
+            added.minDimensions.width = textMinWidth
             added.minDimensions.height = textDimensions.height
             
             added.elementConfigs.internalArray = &self.elementConfigs.internalArray[self.elementConfigs.length]
@@ -1272,9 +1303,14 @@ terra ui.FloatEqual(a: float, b: float) : bool
 end
 
 terra ui.clamp(val: float, minVal: float, maxVal: float) : float
-    if val < minVal then return minVal end
-    if val > maxVal then return maxVal end
-    return val
+    var out = val
+    if out < minVal then
+        out = minVal
+    end
+    if out > maxVal then
+        out = maxVal
+    end
+    return out
 end
 
 terra ui.ElementHasConfig(elem: &layout.LayoutElement, cfgType: uint8) : bool
@@ -2395,6 +2431,8 @@ terra ui.Context:calculateFinalLayout()
                                             scrollData.openThisFrame = true
                                             if ui.queryScrollOffsetFunction ~= nil then
                                                 scrollData.scrollPosition = ui.queryScrollOffsetFunction(currentElement.id, ui.queryScrollOffsetUserData)
+                                            else
+                                                scrollData.scrollPosition = decoded.clip.childOffset
                                             end
                                         end
                                     end
@@ -2594,15 +2632,15 @@ terra ui.Context:calculateFinalLayout()
                                             if childElement ~= nil and childElement.layoutConfig ~= nil then
                                                 var childNode: layout.LayoutElementTreeNode
                                                 childNode.layoutElement = childElement
+                                                childNode.position.x = 0
+                                                childNode.position.y = 0
+                                                childNode.nextChildOffset.x = [float](childElement.layoutConfig.padding.left)
+                                                childNode.nextChildOffset.y = [float](childElement.layoutConfig.padding.top)
                                                 
                                                 var scrollOffsetX: float = 0
                                                 var scrollOffsetY: float = 0
                                                 if decoded.clip ~= nil then
-                                                    var scrollData = self:findScrollContainerData(currentElement.id)
-                                                    if scrollData ~= nil then
-                                                        scrollOffsetX = scrollData.scrollPosition.x
-                                                        scrollOffsetY = scrollData.scrollPosition.y
-                                                    else
+                                                    if not ui.externalScrollHandlingEnabled then
                                                         scrollOffsetX = decoded.clip.childOffset.x
                                                         scrollOffsetY = decoded.clip.childOffset.y
                                                     end
@@ -2612,9 +2650,7 @@ terra ui.Context:calculateFinalLayout()
                                                     var whiteSpaceAroundChild: float = currentElement.dimensions.height - 
                                                         [float](layoutCfg.padding.top + layoutCfg.padding.bottom) - 
                                                         childElement.dimensions.height
-                                                    
-                                                    childNode.nextChildOffset.y = [float](childElement.layoutConfig.padding.top)
-                                                    
+
                                                     if layoutCfg.childAlignment.y == config.ALIGN_Y_CENTER then
                                                         childNode.nextChildOffset.y = childNode.nextChildOffset.y + whiteSpaceAroundChild / 2.0
                                                     elseif layoutCfg.childAlignment.y == config.ALIGN_Y_BOTTOM then
@@ -2624,9 +2660,7 @@ terra ui.Context:calculateFinalLayout()
                                                     var whiteSpaceAroundChild: float = currentElement.dimensions.width - 
                                                         [float](layoutCfg.padding.left + layoutCfg.padding.right) - 
                                                         childElement.dimensions.width
-                                                    
-                                                    childNode.nextChildOffset.x = [float](childElement.layoutConfig.padding.left)
-                                                    
+
                                                     if layoutCfg.childAlignment.x == config.ALIGN_X_CENTER then
                                                         childNode.nextChildOffset.x = childNode.nextChildOffset.x + whiteSpaceAroundChild / 2.0
                                                     elseif layoutCfg.childAlignment.x == config.ALIGN_X_RIGHT then
@@ -3032,6 +3066,18 @@ terra ui.UpdateScrollContainersForContext(ctx: &ui.Context, enableDragScrolling:
                 end
             end
         end
+    end
+
+    i = 0
+    while i < ctx.scrollContainerDatas.length do
+        var scrollData = ctx.scrollContainerDatas:get(i)
+        if scrollData ~= nil and scrollData.layoutElement ~= nil then
+            var clipCfgResult = ui.FindElementConfigWithType(scrollData.layoutElement, config.CONFIG_CLIP)
+            if clipCfgResult ~= nil and clipCfgResult.config.clipConfig ~= nil then
+                clipCfgResult.config.clipConfig.childOffset = scrollData.scrollPosition
+            end
+        end
+        i = i + 1
     end
 end
 
