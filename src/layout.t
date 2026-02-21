@@ -68,4 +68,21 @@ ui.ScrollContainerDataInternal = struct {
     pointerScrollActive : bool
 }
 
+ui.MeasuredWord = struct {
+    startOffset : int32,
+    length : int32,
+    width : float,
+    next : int32
+}
+
+ui.MeasureTextCacheItem = struct {
+    measuredWordsStartIndex : int32,
+    nextIndex : int32,
+    id : uint32,
+    generation : uint32,
+    minWidth : float,
+    unwrappedDimensions : config.Dimensions,
+    containsNewlines : bool
+}
+
 return ui

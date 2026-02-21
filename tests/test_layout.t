@@ -622,7 +622,10 @@ test_text_with_wrapped_lines()
 
 print("\n=== Advanced Features Test ===")
 
+local measureTextCalls = global(int32, 0)
+
 terra mock_measure_text(text: ui.StringSlice, textCfg: &ui.TextConfig, userData: &opaque) : ui.Dimensions
+    measureTextCalls = measureTextCalls + 1
     var out: ui.Dimensions
     out.width = [float](text.length * 8)
     if textCfg ~= nil and textCfg.lineHeight > 0 then
@@ -631,6 +634,66 @@ terra mock_measure_text(text: ui.StringSlice, textCfg: &ui.TextConfig, userData:
         out.height = 16.0
     end
     return out
+end
+
+terra test_measure_text_cache_hit_and_reset()
+    var arena: ui.Arena
+    arena.nextAllocation = 0
+    arena.capacity = 1024 * 1024
+    arena.memory = [&int8](C.malloc([uint64](arena.capacity)))
+
+    var ctx: ui.Context
+    ui.SetCurrentContext(&ctx)
+    if not ctx:initialize(&arena, 128) then
+        C.free(arena.memory)
+        C.printf("test_measure_text_cache_hit_and_reset: FAIL (init)\n")
+        return 1
+    end
+
+    measureTextCalls = 0
+    ui.SetMeasureTextFunction(mock_measure_text, nil)
+
+    var t: ui.String
+    t.isStaticallyAllocated = true
+    t.length = 10
+    t.chars = "HelloCache"
+
+    var tc: ui.TextConfig
+    tc.userData = nil
+    tc.textColor.r = 255
+    tc.textColor.g = 255
+    tc.textColor.b = 255
+    tc.textColor.a = 255
+    tc.fontId = 0
+    tc.fontSize = 16
+    tc.letterSpacing = 0
+    tc.lineHeight = 16
+    tc.wrapMode = ui.TEXT_WRAP_WORDS
+    tc.textAlignment = ui.TEXT_ALIGN_LEFT
+
+    ui.BeginLayout(400, 200)
+    ui.OpenTextElement(t, &tc)
+    ui.EndLayout()
+    var firstCalls = measureTextCalls
+
+    ui.BeginLayout(400, 200)
+    ui.OpenTextElement(t, &tc)
+    ui.EndLayout()
+    var secondCalls = measureTextCalls
+
+    ui.ResetMeasureTextCache()
+    ui.BeginLayout(400, 200)
+    ui.OpenTextElement(t, &tc)
+    ui.EndLayout()
+    var thirdCalls = measureTextCalls
+
+    C.free(arena.memory)
+    if firstCalls > 0 and secondCalls == firstCalls and thirdCalls > secondCalls then
+        C.printf("test_measure_text_cache_hit_and_reset: PASS\n")
+        return 0
+    end
+    C.printf("test_measure_text_cache_hit_and_reset: FAIL\n")
+    return 1
 end
 
 terra test_measure_text_callback()
@@ -986,11 +1049,460 @@ terra test_scroll_momentum_state()
     return 1
 end
 
+local hoverCallbackCount = global(int32, 0)
+local errorCallbackCount = global(int32, 0)
+local hoverCurrentCallbackCount = global(int32, 0)
+
+terra hover_callback(_id: ui.ElementId, _pointer: ui.PointerData, _userData: &opaque)
+    hoverCallbackCount = hoverCallbackCount + 1
+end
+
+terra error_callback(_err: ui.ErrorData)
+    errorCallbackCount = errorCallbackCount + 1
+end
+
+terra hover_current_callback(_id: ui.ElementId, _pointer: ui.PointerData, _userData: &opaque)
+    hoverCurrentCallbackCount = hoverCurrentCallbackCount + 1
+end
+
+terra query_scroll_offset_callback(_id: uint32, _userData: &opaque) : ui.Vector2
+    var out: ui.Vector2
+    out.x = -7
+    out.y = -11
+    return out
+end
+
+terra test_hover_and_element_data()
+    var arena: ui.Arena
+    arena.nextAllocation = 0
+    arena.capacity = 1024 * 1024
+    arena.memory = [&int8](C.malloc([uint64](arena.capacity)))
+
+    var ctx: ui.Context
+    ui.SetCurrentContext(&ctx)
+    if not ctx:initialize(&arena, 128) then
+        C.free(arena.memory)
+        C.printf("test_hover_and_element_data: FAIL (init)\n")
+        return 1
+    end
+
+    var hid = ui.HashString(ui.String { isStaticallyAllocated = true, length = 9, chars = "hoverable" }, 0)
+    var pointer: ui.Vector2
+    pointer.x = 20
+    pointer.y = 20
+    ui.SetPointerState(pointer, false)
+
+    ui.BeginLayout(200, 150)
+    ui.OpenElementWithId(hid)
+    var elem = ctx:getOpenLayoutElement()
+    if elem ~= nil then
+        var lc: ui.LayoutConfig
+        lc.sizing.width.type = ui.SIZING_FIXED
+        lc.sizing.width.size.min = 100
+        lc.sizing.width.size.max = 100
+        lc.sizing.height.type = ui.SIZING_FIXED
+        lc.sizing.height.size.min = 80
+        lc.sizing.height.size.max = 80
+        lc.padding.left = 0
+        lc.padding.right = 0
+        lc.padding.top = 0
+        lc.padding.bottom = 0
+        lc.childGap = 0
+        lc.childAlignment.x = ui.ALIGN_X_LEFT
+        lc.childAlignment.y = ui.ALIGN_Y_TOP
+        lc.layoutDirection = ui.LEFT_TO_RIGHT
+        elem.layoutConfig = ctx:storeLayoutConfig(lc)
+    end
+    ui.CloseElement()
+    ui.EndLayout()
+
+    hoverCallbackCount = 0
+    ui.OnHover(hid, hover_callback, nil)
+
+    var data = ui.GetElementData(hid)
+    var ok = ui.Hovered() and ui.PointerOver(hid) and data.found and hoverCallbackCount == 1
+    if ok then
+        if data.boundingBox.width < 99.0 or data.boundingBox.height < 79.0 then
+            ok = false
+        end
+    end
+
+    C.free(arena.memory)
+    if ok then
+        C.printf("test_hover_and_element_data: PASS\n")
+        return 0
+    end
+    C.printf("test_hover_and_element_data: FAIL\n")
+    return 1
+end
+
+terra build_offscreen_floating(ctx: &ui.Context, id: ui.ElementId)
+    ui.OpenElementWithId(id)
+    var elem = ctx:getOpenLayoutElement()
+    if elem ~= nil then
+        var lc: ui.LayoutConfig
+        lc.sizing.width.type = ui.SIZING_FIXED
+        lc.sizing.width.size.min = 20
+        lc.sizing.width.size.max = 20
+        lc.sizing.height.type = ui.SIZING_FIXED
+        lc.sizing.height.size.min = 20
+        lc.sizing.height.size.max = 20
+        lc.padding.left = 0
+        lc.padding.right = 0
+        lc.padding.top = 0
+        lc.padding.bottom = 0
+        lc.childGap = 0
+        lc.childAlignment.x = ui.ALIGN_X_LEFT
+        lc.childAlignment.y = ui.ALIGN_Y_TOP
+        lc.layoutDirection = ui.LEFT_TO_RIGHT
+        elem.layoutConfig = ctx:storeLayoutConfig(lc)
+
+        var sharedCfg: ui.SharedConfig
+        sharedCfg.backgroundColor.r = 255
+        sharedCfg.backgroundColor.g = 100
+        sharedCfg.backgroundColor.b = 100
+        sharedCfg.backgroundColor.a = 255
+        sharedCfg.cornerRadius.topLeft = 0
+        sharedCfg.cornerRadius.topRight = 0
+        sharedCfg.cornerRadius.bottomLeft = 0
+        sharedCfg.cornerRadius.bottomRight = 0
+        sharedCfg.userData = nil
+        var sharedPtr = ctx:storeSharedConfig(sharedCfg)
+        if sharedPtr ~= nil then
+            var cu: ui.ElementConfigUnion
+            cu.sharedConfig = sharedPtr
+            ctx:attachElementConfig(cu, ui.CONFIG_SHARED)
+        end
+
+        var floating: ui.FloatingConfig
+        floating.offset.x = 250
+        floating.offset.y = 0
+        floating.expand.width = 0
+        floating.expand.height = 0
+        floating.parentId = 0
+        floating.zIndex = 1
+        floating.attachPoints.element = ui.ATTACH_LEFT_TOP
+        floating.attachPoints.parent = ui.ATTACH_LEFT_TOP
+        floating.pointerCaptureMode = ui.POINTER_CAPTURE
+        floating.attachTo = ui.ATTACH_ROOT
+        floating.clipTo = ui.CLIP_NONE
+        var floatingPtr = ctx:storeFloatingConfig(floating)
+        if floatingPtr ~= nil then
+            var cu: ui.ElementConfigUnion
+            cu.floatingConfig = floatingPtr
+            ctx:attachElementConfig(cu, ui.CONFIG_FLOATING)
+        end
+    end
+    ui.CloseElement()
+end
+
+terra test_disable_culling_toggle()
+    var arena: ui.Arena
+    arena.nextAllocation = 0
+    arena.capacity = 1024 * 1024
+    arena.memory = [&int8](C.malloc([uint64](arena.capacity)))
+
+    var ctx: ui.Context
+    ui.SetCurrentContext(&ctx)
+    if not ctx:initialize(&arena, 128) then
+        C.free(arena.memory)
+        C.printf("test_disable_culling_toggle: FAIL (init)\n")
+        return 1
+    end
+
+    var id = ui.HashString(ui.String { isStaticallyAllocated = true, length = 13, chars = "offscreen-flt" }, 0)
+
+    ui.SetDisableCulling(false)
+    ui.BeginLayout(100, 100)
+    build_offscreen_floating(&ctx, id)
+    var cmds1 = ui.EndLayout()
+    var foundWhenEnabled = false
+    if cmds1 ~= nil then
+        for i = 0, cmds1.length do
+            var cmd = cmds1:get(i)
+            if cmd ~= nil and cmd.id == id.id and cmd.commandType == ui.RENDER_RECTANGLE then
+                foundWhenEnabled = true
+            end
+        end
+    end
+
+    ui.SetDisableCulling(true)
+    ui.BeginLayout(100, 100)
+    build_offscreen_floating(&ctx, id)
+    var cmds2 = ui.EndLayout()
+    var foundWhenDisabled = false
+    if cmds2 ~= nil then
+        for i = 0, cmds2.length do
+            var cmd = cmds2:get(i)
+            if cmd ~= nil and cmd.id == id.id and cmd.commandType == ui.RENDER_RECTANGLE then
+                foundWhenDisabled = true
+            end
+        end
+    end
+
+    ui.SetDisableCulling(false)
+    C.free(arena.memory)
+
+    if (not foundWhenEnabled) and foundWhenDisabled then
+        C.printf("test_disable_culling_toggle: PASS\n")
+        return 0
+    end
+    C.printf("test_disable_culling_toggle: FAIL\n")
+    return 1
+end
+
+terra test_api_coverage_smoke()
+    var arena: ui.Arena
+    arena.nextAllocation = 0
+    arena.capacity = 16 * 1024 * 1024
+    arena.memory = [&int8](C.malloc([uint64](arena.capacity)))
+    var ok = true
+
+    var dims: ui.Dimensions
+    dims.width = 320
+    dims.height = 240
+    var newCtx = ui.Initialize(arena, dims)
+    if newCtx == nil then
+        C.free(arena.memory)
+        C.printf("test_api_coverage_smoke: FAIL (Initialize)\n")
+        return 1
+    end
+    var ctx = ui.GetCurrentContext()
+    if ctx == nil then
+        ok = false
+    end
+
+    var minMem = ui.MinMemorySize()
+    if minMem == 0 then
+        ok = false
+    end
+
+    ui.SetLayoutDimensions(ui.Dimensions { width = 500, height = 400 })
+    if ctx.layoutDimensions.width ~= 500 or ctx.layoutDimensions.height ~= 400 then
+        ok = false
+    end
+
+    var prevMax = ui.GetMaxElementCount()
+    ui.SetMaxElementCount(321)
+    if ui.GetMaxElementCount() ~= 321 then
+        ok = false
+    end
+    ui.SetMaxElementCount(prevMax)
+
+    var prevWords = ui.GetMaxMeasureTextCacheWordCount()
+    ui.SetMaxMeasureTextCacheWordCount(2048)
+    if ui.GetMaxMeasureTextCacheWordCount() ~= 2048 then
+        ok = false
+    end
+    ui.SetMaxMeasureTextCacheWordCount(prevWords)
+
+    ui.SetDebugModeEnabled(true)
+    if not ui.IsDebugModeEnabled() then
+        ok = false
+    end
+    ui.SetDebugModeEnabled(false)
+    if ui.IsDebugModeEnabled() then
+        ok = false
+    end
+
+    ui.SetCullingEnabled(true)
+    ui.SetExternalScrollHandlingEnabled(true)
+    ui.SetExternalScrollHandlingEnabled(false)
+    ui.SetErrorHandler(error_callback, nil)
+    errorCallbackCount = 0
+
+    -- Trigger percentage-over-1 error callback while keeping layout valid.
+    ui.BeginLayout(220, 120)
+    ui.OpenElement()
+    var errElem = ctx:getOpenLayoutElement()
+    if errElem ~= nil then
+        var ec: ui.LayoutConfig
+        ec.sizing.width.type = ui.SIZING_PERCENT
+        ec.sizing.width.percent = 1.5
+        ec.sizing.height.type = ui.SIZING_PERCENT
+        ec.sizing.height.percent = 1.2
+        ec.sizing.width.size.min = 0
+        ec.sizing.width.size.max = ui.MAXFLOAT
+        ec.sizing.height.size.min = 0
+        ec.sizing.height.size.max = ui.MAXFLOAT
+        ec.padding.left = 0
+        ec.padding.right = 0
+        ec.padding.top = 0
+        ec.padding.bottom = 0
+        ec.childGap = 0
+        ec.childAlignment.x = ui.ALIGN_X_LEFT
+        ec.childAlignment.y = ui.ALIGN_Y_TOP
+        ec.layoutDirection = ui.LEFT_TO_RIGHT
+        errElem.layoutConfig = ctx:storeLayoutConfig(ec)
+    end
+    ui.CloseElement()
+    ui.EndLayout()
+    if errorCallbackCount <= 0 then
+        ok = false
+    end
+
+    var idA = ui.GetElementId(ui.String { isStaticallyAllocated = true, length = 4, chars = "abcd" })
+    var idB = ui.GetElementIdWithIndex(ui.String { isStaticallyAllocated = true, length = 4, chars = "abcd" }, 2)
+    if idA.id == 0 or idB.id == 0 or idA.id == idB.id then
+        ok = false
+    end
+
+    hoverCurrentCallbackCount = 0
+    ui.BeginLayout(220, 180)
+    ui.OpenElementWithId(idA)
+    var e = ctx:getOpenLayoutElement()
+    if e ~= nil then
+        var lc: ui.LayoutConfig
+        lc.sizing.width.type = ui.SIZING_FIXED
+        lc.sizing.width.size.min = 120
+        lc.sizing.width.size.max = 120
+        lc.sizing.height.type = ui.SIZING_FIXED
+        lc.sizing.height.size.min = 80
+        lc.sizing.height.size.max = 80
+        lc.padding.left = 0
+        lc.padding.right = 0
+        lc.padding.top = 0
+        lc.padding.bottom = 0
+        lc.childGap = 0
+        lc.childAlignment.x = ui.ALIGN_X_LEFT
+        lc.childAlignment.y = ui.ALIGN_Y_TOP
+        lc.layoutDirection = ui.TOP_TO_BOTTOM
+        e.layoutConfig = ctx:storeLayoutConfig(lc)
+
+        var clipCfg: ui.ClipConfig
+        clipCfg.horizontal = true
+        clipCfg.vertical = true
+        clipCfg.childOffset.x = 0
+        clipCfg.childOffset.y = 0
+        var clipPtr = ctx:storeClipConfig(clipCfg)
+        if clipPtr ~= nil then
+            var cu: ui.ElementConfigUnion
+            cu.clipConfig = clipPtr
+            ctx:attachElementConfig(cu, ui.CONFIG_CLIP)
+        end
+
+        if not ui.ElementHasConfig(e, ui.CONFIG_CLIP) then
+            ok = false
+        end
+        var foundCfg = ui.FindElementConfigWithType(e, ui.CONFIG_CLIP)
+        if foundCfg == nil then
+            ok = false
+        end
+
+        ui.OnHoverCurrent(hover_current_callback, nil)
+
+        ui.OpenElement()
+        var child = ctx:getOpenLayoutElement()
+        if child ~= nil then
+            var cc: ui.LayoutConfig
+            cc.sizing.width.type = ui.SIZING_FIXED
+            cc.sizing.width.size.min = 400
+            cc.sizing.width.size.max = 400
+            cc.sizing.height.type = ui.SIZING_FIXED
+            cc.sizing.height.size.min = 300
+            cc.sizing.height.size.max = 300
+            cc.padding.left = 0
+            cc.padding.right = 0
+            cc.padding.top = 0
+            cc.padding.bottom = 0
+            cc.childGap = 0
+            cc.childAlignment.x = ui.ALIGN_X_LEFT
+            cc.childAlignment.y = ui.ALIGN_Y_TOP
+            cc.layoutDirection = ui.LEFT_TO_RIGHT
+            child.layoutConfig = ctx:storeLayoutConfig(cc)
+        end
+        ui.CloseElement()
+    end
+    ui.CloseElement()
+
+    ui.SetQueryScrollOffsetFunction(query_scroll_offset_callback, nil)
+    ui.EndLayout()
+
+    var p: ui.Vector2
+    p.x = 10
+    p.y = 10
+    ui.SetPointerState(p, false)
+    if not ui.Hovered() or not ui.PointerOver(idA) then
+        ok = false
+    end
+    if hoverCurrentCallbackCount <= 0 then
+        ok = false
+    end
+
+    var scrollData = ui.GetScrollContainerData(idA)
+    if not scrollData.found then
+        ok = false
+    else
+        if scrollData.scrollPosition == nil or scrollData.scrollPosition.x ~= -7 or scrollData.scrollPosition.y ~= -11 then
+            ok = false
+        end
+    end
+
+    -- GetScrollOffset on currently open clip container (fallback path via childOffset).
+    ui.BeginLayout(100, 100)
+    ui.OpenElementWithId(idA)
+    var offElem = ctx:getOpenLayoutElement()
+    if offElem ~= nil then
+        var oc: ui.LayoutConfig
+        oc.sizing.width.type = ui.SIZING_FIXED
+        oc.sizing.width.size.min = 50
+        oc.sizing.width.size.max = 50
+        oc.sizing.height.type = ui.SIZING_FIXED
+        oc.sizing.height.size.min = 50
+        oc.sizing.height.size.max = 50
+        oc.padding.left = 0
+        oc.padding.right = 0
+        oc.padding.top = 0
+        oc.padding.bottom = 0
+        oc.childGap = 0
+        oc.childAlignment.x = ui.ALIGN_X_LEFT
+        oc.childAlignment.y = ui.ALIGN_Y_TOP
+        oc.layoutDirection = ui.LEFT_TO_RIGHT
+        offElem.layoutConfig = ctx:storeLayoutConfig(oc)
+        var ccfg: ui.ClipConfig
+        ccfg.horizontal = true
+        ccfg.vertical = true
+        ccfg.childOffset.x = -3
+        ccfg.childOffset.y = -4
+        var ccfgPtr = ctx:storeClipConfig(ccfg)
+        if ccfgPtr ~= nil then
+            var cu: ui.ElementConfigUnion
+            cu.clipConfig = ccfgPtr
+            ctx:attachElementConfig(cu, ui.CONFIG_CLIP)
+        end
+    end
+    var offset = ui.GetScrollOffset()
+    if offset.x ~= -7 or offset.y ~= -11 then
+        ok = false
+    end
+    ui.CloseElement()
+    ui.EndLayout()
+
+    if not ui.FloatEqual(1.0, 1.0 + ui.EPSILON * 0.5) then
+        ok = false
+    end
+    if ui.clamp(-4.0, -2.0, 3.0) ~= -2.0 then
+        ok = false
+    end
+
+    C.free(arena.memory)
+    if ok then
+        C.printf("test_api_coverage_smoke: PASS\n")
+        return 0
+    end
+    C.printf("test_api_coverage_smoke: FAIL\n")
+    return 1
+end
+
 local advancedFailures = 0
 advancedFailures = advancedFailures + test_measure_text_callback()
+advancedFailures = advancedFailures + test_measure_text_cache_hit_and_reset()
 advancedFailures = advancedFailures + test_aspect_ratio_layout()
 advancedFailures = advancedFailures + test_floating_attach_points()
 advancedFailures = advancedFailures + test_scroll_momentum_state()
+advancedFailures = advancedFailures + test_hover_and_element_data()
+advancedFailures = advancedFailures + test_disable_culling_toggle()
+advancedFailures = advancedFailures + test_api_coverage_smoke()
 if advancedFailures == 0 then
     print("Advanced features: PASS")
 else

@@ -26,11 +26,38 @@ local StringArray = array_mod.Array(string_mod.String)
 local LayoutElementTreeRootArray = array_mod.Array(layout.LayoutElementTreeRoot)
 local LayoutElementTreeNodeArray = array_mod.Array(layout.LayoutElementTreeNode)
 local ScrollContainerDataArray = array_mod.Array(layout.ScrollContainerDataInternal)
+local MeasuredWordArray = array_mod.Array(layout.MeasuredWord)
+local MeasureTextCacheItemArray = array_mod.Array(layout.MeasureTextCacheItem)
+local UInt32Array = array_mod.Array(uint32)
+local BoundingBoxArray = array_mod.Array(config.BoundingBox)
+local BoolArray = array_mod.Array(bool)
+local MeasureTextFnType = { string_mod.StringSlice, &config.TextConfig, &opaque } -> config.Dimensions
+local QueryScrollOffsetFnType = { uint32, &opaque } -> config.Vector2
+local HoverCallbackFnType = { hash.ElementId, config.PointerData, &opaque } -> {}
+local ErrorHandlerFnType = { config.ErrorData } -> {}
+local HoverBinding = struct {
+    elementId : uint32,
+    callback : HoverCallbackFnType,
+    userData : &opaque
+}
+local HoverBindingArray = array_mod.Array(HoverBinding)
+local DecodedElementConfigs = struct {
+    text : &config.TextConfig,
+    border : &config.BorderConfig,
+    floating : &config.FloatingConfig,
+    clip : &config.ClipConfig,
+    aspect : &config.AspectRatioConfig,
+    image : &config.ImageConfig,
+    custom : &config.CustomConfig,
+    shared : &config.SharedConfig
+}
 
 ui.MAXFLOAT = 3.40282346638528859812e+38
+ui.ARGILE_API_VERSION = 1
 
 ui.Context = struct {
     maxElementCount : int32,
+    maxMeasureTextCacheWordCount : int32,
     generation : uint32,
     arenaResetOffset : uint64,
     internalArena : ui.Arena,
@@ -60,18 +87,39 @@ ui.Context = struct {
     layoutElementTreeNodeArray1 : LayoutElementTreeNodeArray,
     layoutElementIdStrings : StringArray,
     scrollContainerDatas : ScrollContainerDataArray,
+    hoverBindings : HoverBindingArray,
+    measureTextHashMapInternal : MeasureTextCacheItemArray,
+    measureTextHashMapInternalFreeList : Int32Array,
+    measureTextHashMap : Int32Array,
+    measuredWords : MeasuredWordArray,
+    measuredWordsFreeList : Int32Array,
+    pointerOverIds : UInt32Array,
+    elementIdLookupKeys : UInt32Array,
+    elementIdLookupValues : Int32Array,
+    elementBoundingBoxes : BoundingBoxArray,
+    elementBoundingBoxValid : BoolArray,
+    warningTextMeasurementFunctionNotSet : bool,
+    warningMaxTextMeasureCacheExceeded : bool,
+    warningDuplicateId : bool,
+    warningPercentageOverOne : bool,
+    warningFloatingParentNotFound : bool,
     maxElementsExceeded : bool
 }
 
 local ContextPtr = &ui.Context
 ui.currentContextPtr = global(ContextPtr, nil)
-
-local MeasureTextFnType = { string_mod.StringSlice, &config.TextConfig, &opaque } -> config.Dimensions
-local QueryScrollOffsetFnType = { uint32, &opaque } -> config.Vector2
+ui.defaultContextStorage = global(ui.Context)
 ui.measureTextFunction = global(MeasureTextFnType, nil)
 ui.measureTextUserData = global(&opaque, nil)
 ui.queryScrollOffsetFunction = global(QueryScrollOffsetFnType, nil)
 ui.queryScrollOffsetUserData = global(&opaque, nil)
+ui.errorHandlerFunction = global(ErrorHandlerFnType, nil)
+ui.errorHandlerUserData = global(&opaque, nil)
+ui.disableCulling = global(bool, false)
+ui.debugModeEnabled = global(bool, false)
+ui.externalScrollHandlingEnabled = global(bool, false)
+ui.defaultMaxElementCount = global(int32, 1024)
+ui.defaultMaxMeasureTextWordCacheCount = global(int32, 16384)
 
 terra ui.GetCurrentContext() : &ui.Context
     return ui.currentContextPtr
@@ -79,6 +127,33 @@ end
 
 terra ui.SetCurrentContext(ctx: &ui.Context)
     ui.currentContextPtr = ctx
+end
+
+terra ui.Initialize(arena: ui.Arena, layoutDimensions: config.Dimensions) : &ui.Context
+    var a = arena
+    var ctx = &ui.defaultContextStorage
+    if not ctx:initialize(&a, ui.defaultMaxElementCount) then
+        return nil
+    end
+    ui.SetCurrentContext(ctx)
+    ctx.layoutDimensions = layoutDimensions
+    return ctx
+end
+
+terra ui.GetApiVersion() : uint32
+    return ui.ARGILE_API_VERSION
+end
+
+terra ui.GetContextSize() : uint64
+    return [uint64](sizeof(ui.Context))
+end
+
+terra ui.InitializeContext(ctx: &ui.Context, arena: ui.Arena, maxElements: int32) : bool
+    if ctx == nil then
+        return false
+    end
+    var a = arena
+    return ctx:initialize(&a, maxElements)
 end
 
 terra ui.Context:getOpenLayoutElement() : &layout.LayoutElement
@@ -102,6 +177,7 @@ end
 
 terra ui.Context:initialize(arena: &ui.Arena, maxElements: int32) : bool
     self.maxElementCount = maxElements
+    self.maxMeasureTextCacheWordCount = ui.defaultMaxMeasureTextWordCacheCount
     self.internalArena = @arena
     self.arenaResetOffset = arena.nextAllocation
     self.generation = 0
@@ -109,6 +185,11 @@ terra ui.Context:initialize(arena: &ui.Arena, maxElements: int32) : bool
     self.layoutDimensions.width = 0
     self.layoutDimensions.height = 0
     self.dynamicElementIndex = 0
+    self.warningTextMeasurementFunctionNotSet = false
+    self.warningMaxTextMeasureCacheExceeded = false
+    self.warningDuplicateId = false
+    self.warningPercentageOverOne = false
+    self.warningFloatingParentNotFound = false
     
     if not self.layoutElements:allocate(maxElements, arena) then return false end
     if not self.renderCommands:allocate(maxElements, arena) then return false end
@@ -133,6 +214,47 @@ terra ui.Context:initialize(arena: &ui.Arena, maxElements: int32) : bool
     if not self.layoutElementTreeNodeArray1:allocate(maxElements, arena) then return false end
     if not self.layoutElementIdStrings:allocate(maxElements, arena) then return false end
     if not self.scrollContainerDatas:allocate(maxElements, arena) then return false end
+    if not self.hoverBindings:allocate(maxElements, arena) then return false end
+    if not self.measureTextHashMapInternal:allocate(maxElements, arena) then return false end
+    if not self.measureTextHashMapInternalFreeList:allocate(maxElements, arena) then return false end
+    var hashBuckets = maxElements
+    if self.maxMeasureTextCacheWordCount / 32 > hashBuckets then
+        hashBuckets = self.maxMeasureTextCacheWordCount / 32
+    end
+    if hashBuckets < 1 then hashBuckets = 1 end
+    if not self.measureTextHashMap:allocate(hashBuckets, arena) then return false end
+    if not self.measuredWords:allocate(self.maxMeasureTextCacheWordCount, arena) then return false end
+    if not self.measuredWordsFreeList:allocate(self.maxMeasureTextCacheWordCount, arena) then return false end
+    if not self.pointerOverIds:allocate(maxElements, arena) then return false end
+    if not self.elementIdLookupKeys:allocate(maxElements * 4, arena) then return false end
+    if not self.elementIdLookupValues:allocate(maxElements * 4, arena) then return false end
+    if not self.elementBoundingBoxes:allocate(maxElements, arena) then return false end
+    if not self.elementBoundingBoxValid:allocate(maxElements, arena) then return false end
+
+    self.elementIdLookupKeys.length = self.elementIdLookupKeys.capacity
+    self.elementIdLookupValues.length = self.elementIdLookupValues.capacity
+    self.elementBoundingBoxValid.length = self.elementBoundingBoxValid.capacity
+    self.measureTextHashMap.length = self.measureTextHashMap.capacity
+    var i: int32 = 0
+    while i < self.elementIdLookupValues.length do
+        self.elementIdLookupKeys.internalArray[i] = 0
+        self.elementIdLookupValues.internalArray[i] = -1
+        i = i + 1
+    end
+    i = 0
+    while i < self.elementBoundingBoxValid.length do
+        self.elementBoundingBoxValid.internalArray[i] = false
+        i = i + 1
+    end
+    i = 0
+    while i < self.measureTextHashMap.length do
+        self.measureTextHashMap.internalArray[i] = 0
+        i = i + 1
+    end
+    self.measureTextHashMapInternal.length = 1
+    self.measureTextHashMapInternalFreeList.length = 0
+    self.measuredWords.length = 0
+    self.measuredWordsFreeList.length = 0
     
     return true
 end
@@ -142,6 +264,11 @@ terra ui.Context:resetEphemeral()
     self.generation = self.generation + 1
     self.dynamicElementIndex = 0
     self.maxElementsExceeded = false
+    self.warningTextMeasurementFunctionNotSet = false
+    self.warningMaxTextMeasureCacheExceeded = false
+    self.warningDuplicateId = false
+    self.warningPercentageOverOne = false
+    self.warningFloatingParentNotFound = false
     
     self.layoutElements:clear()
     self.renderCommands:clear()
@@ -154,6 +281,8 @@ terra ui.Context:resetEphemeral()
     self.layoutElementTreeNodeArray1:clear()
     self.wrappedTextLines:clear()
     self.layoutElementIdStrings:clear()
+    self.hoverBindings:clear()
+    self.pointerOverIds:clear()
 
     var i: int32 = 0
     while i < self.scrollContainerDatas.length do
@@ -174,6 +303,324 @@ terra ui.Context:resetEphemeral()
     self.customConfigs:clear()
     self.borderConfigs:clear()
     self.sharedConfigs:clear()
+
+    var mapIdx: int32 = 0
+    while mapIdx < self.elementIdLookupValues.length do
+        self.elementIdLookupKeys.internalArray[mapIdx] = 0
+        self.elementIdLookupValues.internalArray[mapIdx] = -1
+        mapIdx = mapIdx + 1
+    end
+
+    var bbIdx: int32 = 0
+    while bbIdx < self.elementBoundingBoxValid.length do
+        self.elementBoundingBoxValid.internalArray[bbIdx] = false
+        bbIdx = bbIdx + 1
+    end
+end
+
+terra ui.Context:registerElementId(elementId: uint32, elementIndex: int32)
+    if elementId == 0 or self.elementIdLookupValues.length <= 0 then return end
+    var cap = self.elementIdLookupValues.length
+    var slot = [int32](elementId % [uint32](cap))
+    var probes: int32 = 0
+    while probes < cap do
+        var key = self.elementIdLookupKeys.internalArray[slot]
+        var value = self.elementIdLookupValues.internalArray[slot]
+        if value < 0 then
+            self.elementIdLookupKeys.internalArray[slot] = elementId
+            self.elementIdLookupValues.internalArray[slot] = elementIndex
+            return
+        elseif key == elementId then
+            if value ~= elementIndex and not self.warningDuplicateId then
+                self.warningDuplicateId = true
+                ui.ReportError(config.ERROR_TYPE_DUPLICATE_ID,
+                    config.String { isStaticallyAllocated = true, length = 78, chars = "Duplicate element ID declared during this layout. IDs must be unique per frame." })
+            end
+            self.elementIdLookupValues.internalArray[slot] = elementIndex
+            return
+        end
+        slot = slot + 1
+        if slot >= cap then
+            slot = 0
+        end
+        probes = probes + 1
+    end
+end
+
+terra ui.Context:findElementIndexById(elementId: uint32) : int32
+    if elementId == 0 or self.elementIdLookupValues.length <= 0 then return -1 end
+    var cap = self.elementIdLookupValues.length
+    var slot = [int32](elementId % [uint32](cap))
+    var probes: int32 = 0
+    while probes < cap do
+        var value = self.elementIdLookupValues.internalArray[slot]
+        if value < 0 then
+            return -1
+        end
+        if self.elementIdLookupKeys.internalArray[slot] == elementId then
+            return value
+        end
+        slot = slot + 1
+        if slot >= cap then
+            slot = 0
+        end
+        probes = probes + 1
+    end
+    return -1
+end
+
+terra ui.HashStringContentsWithConfig(text: &config.String, cfg: &config.TextConfig) : uint32
+    if text == nil or cfg == nil then return 1 end
+    var h: uint32 = 0
+    if text.isStaticallyAllocated then
+        h = h + [uint32]([uint64](text.chars))
+        h = h + (h << 10)
+        h = h ^ (h >> 6)
+        h = h + [uint32](text.length)
+        h = h + (h << 10)
+        h = h ^ (h >> 6)
+    else
+        h = [uint32](hash.HashData([&uint8](text.chars), [uint64](text.length)) % [uint64](4294967295ULL))
+    end
+
+    h = h + [uint32](cfg.fontId)
+    h = h + (h << 10)
+    h = h ^ (h >> 6)
+
+    h = h + [uint32](cfg.fontSize)
+    h = h + (h << 10)
+    h = h ^ (h >> 6)
+
+    h = h + [uint32](cfg.letterSpacing)
+    h = h + (h << 10)
+    h = h ^ (h >> 6)
+
+    h = h + (h << 3)
+    h = h ^ (h >> 11)
+    h = h + (h << 15)
+    return h + 1
+end
+
+terra ui.Context:addMeasuredWord(word: layout.MeasuredWord, previousWord: &layout.MeasuredWord) : &layout.MeasuredWord
+    if previousWord == nil then return nil end
+    if self.measuredWordsFreeList.length > 0 then
+        var newItemIndex = self.measuredWordsFreeList:getValue(self.measuredWordsFreeList.length - 1)
+        self.measuredWordsFreeList.length = self.measuredWordsFreeList.length - 1
+        self.measuredWords:set(newItemIndex, word)
+        previousWord.next = newItemIndex
+        return self.measuredWords:get(newItemIndex)
+    else
+        previousWord.next = self.measuredWords.length
+        return self.measuredWords:add(word)
+    end
+end
+
+terra ui.Context:measureTextCached(text: &config.String, textCfg: &config.TextConfig) : &layout.MeasureTextCacheItem
+    if text == nil or textCfg == nil then return nil end
+    if ui.measureTextFunction == nil then
+        if not self.warningTextMeasurementFunctionNotSet then
+            self.warningTextMeasurementFunctionNotSet = true
+            ui.ReportError(config.ERROR_TYPE_TEXT_MEASUREMENT_FUNCTION_NOT_PROVIDED,
+                config.String { isStaticallyAllocated = true, length = 136, chars = "MeasureText function is nil. Call SetMeasureTextFunction() with a valid callback before creating text elements." })
+        end
+        return nil
+    end
+    if self.measureTextHashMap.length <= 0 then return nil end
+
+    var id = ui.HashStringContentsWithConfig(text, textCfg)
+    var hashBucket = [int32](id % [uint32](self.measureTextHashMap.length))
+    var elementIndexPrevious: int32 = 0
+    var elementIndex = self.measureTextHashMap.internalArray[hashBucket]
+    while elementIndex ~= 0 do
+        var hashEntry = self.measureTextHashMapInternal:get(elementIndex)
+        if hashEntry ~= nil then
+            if hashEntry.id == id then
+                hashEntry.generation = self.generation
+                return hashEntry
+            end
+            if self.generation - hashEntry.generation > 2 then
+                var nextWordIndex = hashEntry.measuredWordsStartIndex
+                while nextWordIndex ~= -1 do
+                    var measuredWord = self.measuredWords:get(nextWordIndex)
+                    self.measuredWordsFreeList:add(nextWordIndex)
+                    if measuredWord == nil then
+                        nextWordIndex = -1
+                    else
+                        nextWordIndex = measuredWord.next
+                    end
+                end
+
+                var nextIndex = hashEntry.nextIndex
+                var emptyEntry: layout.MeasureTextCacheItem
+                emptyEntry.measuredWordsStartIndex = -1
+                self.measureTextHashMapInternal:set(elementIndex, emptyEntry)
+                self.measureTextHashMapInternalFreeList:add(elementIndex)
+                if elementIndexPrevious == 0 then
+                    self.measureTextHashMap.internalArray[hashBucket] = nextIndex
+                else
+                    var prev = self.measureTextHashMapInternal:get(elementIndexPrevious)
+                    if prev ~= nil then
+                        prev.nextIndex = nextIndex
+                    end
+                end
+                elementIndex = nextIndex
+            else
+                elementIndexPrevious = elementIndex
+                elementIndex = hashEntry.nextIndex
+            end
+        else
+            break
+        end
+    end
+
+    var newItemIndex: int32 = 0
+    var newCacheItem: layout.MeasureTextCacheItem
+    newCacheItem.measuredWordsStartIndex = -1
+    newCacheItem.nextIndex = 0
+    newCacheItem.id = id
+    newCacheItem.generation = self.generation
+    newCacheItem.minWidth = 0
+    newCacheItem.unwrappedDimensions.width = 0
+    newCacheItem.unwrappedDimensions.height = 0
+    newCacheItem.containsNewlines = false
+
+    var measured: &layout.MeasureTextCacheItem = nil
+    if self.measureTextHashMapInternalFreeList.length > 0 then
+        newItemIndex = self.measureTextHashMapInternalFreeList:getValue(self.measureTextHashMapInternalFreeList.length - 1)
+        self.measureTextHashMapInternalFreeList.length = self.measureTextHashMapInternalFreeList.length - 1
+        self.measureTextHashMapInternal:set(newItemIndex, newCacheItem)
+        measured = self.measureTextHashMapInternal:get(newItemIndex)
+    else
+        if self.measureTextHashMapInternal.length >= self.measureTextHashMapInternal.capacity - 1 then
+            if not self.warningMaxTextMeasureCacheExceeded then
+                self.warningMaxTextMeasureCacheExceeded = true
+                ui.ReportError(config.ERROR_TYPE_ELEMENTS_CAPACITY_EXCEEDED,
+                    config.String { isStaticallyAllocated = true, length = 97, chars = "Text cache hash map capacity exceeded. Increase max elements or cache capacity and reinitialize." })
+            end
+            return nil
+        end
+        measured = self.measureTextHashMapInternal:add(newCacheItem)
+        newItemIndex = self.measureTextHashMapInternal.length - 1
+    end
+    if measured == nil then return nil end
+
+    var oneChar: config.StringSlice
+    oneChar.length = 1
+    oneChar.chars = " "
+    oneChar.baseChars = " "
+    var spaceWidth = ui.measureTextFunction(oneChar, textCfg, ui.measureTextUserData).width
+
+    var start: int32 = 0
+    var e: int32 = 0
+    var lineWidth: float = 0
+    var measuredWidth: float = 0
+    var measuredHeight: float = 0
+    var tempWord: layout.MeasuredWord
+    tempWord.next = -1
+    var previousWord: &layout.MeasuredWord = &tempWord
+    while e < text.length do
+        if self.measuredWords.length >= self.measuredWords.capacity - 1 then
+            if not self.warningMaxTextMeasureCacheExceeded then
+                self.warningMaxTextMeasureCacheExceeded = true
+                ui.ReportError(config.ERROR_TYPE_TEXT_MEASUREMENT_CAPACITY_EXCEEDED,
+                    config.String { isStaticallyAllocated = true, length = 88, chars = "Measured words cache capacity exceeded. Increase max measure text cache word count." })
+            end
+            return nil
+        end
+        var current = text.chars[e]
+        if current == 32 or current == 10 then
+            var length = e - start
+            var dimensions: config.Dimensions
+            dimensions.width = 0
+            dimensions.height = 0
+            if length > 0 then
+                var s: config.StringSlice
+                s.length = length
+                s.chars = &text.chars[start]
+                s.baseChars = text.chars
+                dimensions = ui.measureTextFunction(s, textCfg, ui.measureTextUserData)
+            end
+            if dimensions.width > measured.minWidth then
+                measured.minWidth = dimensions.width
+            end
+            if dimensions.height > measuredHeight then
+                measuredHeight = dimensions.height
+            end
+            if current == 32 then
+                dimensions.width = dimensions.width + spaceWidth
+                var w: layout.MeasuredWord
+                w.startOffset = start
+                w.length = length + 1
+                w.width = dimensions.width
+                w.next = -1
+                previousWord = self:addMeasuredWord(w, previousWord)
+                lineWidth = lineWidth + dimensions.width
+            end
+            if current == 10 then
+                if length > 0 then
+                    var w1: layout.MeasuredWord
+                    w1.startOffset = start
+                    w1.length = length
+                    w1.width = dimensions.width
+                    w1.next = -1
+                    previousWord = self:addMeasuredWord(w1, previousWord)
+                end
+                var w2: layout.MeasuredWord
+                w2.startOffset = e + 1
+                w2.length = 0
+                w2.width = 0
+                w2.next = -1
+                previousWord = self:addMeasuredWord(w2, previousWord)
+                lineWidth = lineWidth + dimensions.width
+                if lineWidth > measuredWidth then
+                    measuredWidth = lineWidth
+                end
+                measured.containsNewlines = true
+                lineWidth = 0
+            end
+            start = e + 1
+        end
+        e = e + 1
+    end
+
+    if e - start > 0 then
+        var s: config.StringSlice
+        s.length = e - start
+        s.chars = &text.chars[start]
+        s.baseChars = text.chars
+        var dimensions = ui.measureTextFunction(s, textCfg, ui.measureTextUserData)
+        var w: layout.MeasuredWord
+        w.startOffset = start
+        w.length = e - start
+        w.width = dimensions.width
+        w.next = -1
+        self:addMeasuredWord(w, previousWord)
+        lineWidth = lineWidth + dimensions.width
+        if dimensions.height > measuredHeight then
+            measuredHeight = dimensions.height
+        end
+        if dimensions.width > measured.minWidth then
+            measured.minWidth = dimensions.width
+        end
+    end
+
+    if lineWidth > measuredWidth then
+        measuredWidth = lineWidth
+    end
+    measuredWidth = measuredWidth - [float](textCfg.letterSpacing)
+    measured.measuredWordsStartIndex = tempWord.next
+    measured.unwrappedDimensions.width = measuredWidth
+    measured.unwrappedDimensions.height = measuredHeight
+
+    if elementIndexPrevious ~= 0 then
+        var prev = self.measureTextHashMapInternal:get(elementIndexPrevious)
+        if prev ~= nil then
+            prev.nextIndex = newItemIndex
+        end
+    else
+        self.measureTextHashMap.internalArray[hashBucket] = newItemIndex
+    end
+    return measured
 end
 
 terra ui.Context:storeLayoutConfig(cfg: config.LayoutConfig) : &config.LayoutConfig
@@ -237,6 +684,10 @@ end
 
 terra ui.Context:openElement()
     if self.layoutElements.length >= self.layoutElements.capacity - 1 or self.maxElementsExceeded then
+        if not self.maxElementsExceeded then
+            ui.ReportError(config.ERROR_TYPE_ELEMENTS_CAPACITY_EXCEEDED,
+                config.String { isStaticallyAllocated = true, length = 73, chars = "Element capacity exceeded. Increase max element count and reinitialize context." })
+        end
         self.maxElementsExceeded = true
         return
     end
@@ -272,6 +723,7 @@ terra ui.Context:openElement()
     self.dynamicElementIndex = self.dynamicElementIndex + 1
     if added ~= nil then
         added.id = elementId.id
+        self:registerElementId(added.id, idx)
     end
     
     self.layoutElementClipElementIds:set(idx, 0)
@@ -279,6 +731,10 @@ end
 
 terra ui.Context:openElementWithId(elementId: hash.ElementId)
     if self.layoutElements.length >= self.layoutElements.capacity - 1 or self.maxElementsExceeded then
+        if not self.maxElementsExceeded then
+            ui.ReportError(config.ERROR_TYPE_ELEMENTS_CAPACITY_EXCEEDED,
+                config.String { isStaticallyAllocated = true, length = 73, chars = "Element capacity exceeded. Increase max element count and reinitialize context." })
+        end
         self.maxElementsExceeded = true
         return
     end
@@ -300,6 +756,7 @@ terra ui.Context:openElementWithId(elementId: hash.ElementId)
     self.layoutElements:add(elem)
     var idx = self.layoutElements.length - 1
     self.openLayoutElementStack:add(idx)
+    self:registerElementId(elementId.id, idx)
     self.layoutElementIdStrings:add(elementId.stringId)
     self.layoutElementClipElementIds:set(idx, 0)
 end
@@ -524,36 +981,108 @@ terra ui.Context:beginLayout(width: float, height: float)
     self.layoutElementTreeRoots:add(treeRoot)
 end
 
-terra ui.BeginLayout(width: float, height: float)
-    var ctx = ui.GetCurrentContext()
+terra ui.BeginLayoutForContext(ctx: &ui.Context, width: float, height: float)
     if ctx ~= nil then
         ctx:beginLayout(width, height)
     end
 end
 
-terra ui.OpenElement()
-    var ctx = ui.GetCurrentContext()
+terra ui.BeginLayout(width: float, height: float)
+    ui.BeginLayoutForContext(ui.GetCurrentContext(), width, height)
+end
+
+terra ui.OpenElementForContext(ctx: &ui.Context)
     if ctx ~= nil then
         ctx:openElement()
     end
 end
 
-terra ui.OpenElementWithId(elementId: hash.ElementId)
-    var ctx = ui.GetCurrentContext()
+terra ui.OpenElement()
+    ui.OpenElementForContext(ui.GetCurrentContext())
+end
+
+terra ui.OpenElementWithIdForContext(ctx: &ui.Context, elementId: hash.ElementId)
     if ctx ~= nil then
         ctx:openElementWithId(elementId)
     end
 end
 
-terra ui.CloseElement()
-    var ctx = ui.GetCurrentContext()
+terra ui.OpenElementWithId(elementId: hash.ElementId)
+    ui.OpenElementWithIdForContext(ui.GetCurrentContext(), elementId)
+end
+
+terra ui.ConfigureOpenElementBoxForContext(ctx: &ui.Context, width: float, height: float, layoutDirection: config.LayoutDirection, padding: uint16, childGap: uint16, r: float, g: float, b: float, a: float)
+    if ctx == nil then return end
+
+    var elem = ctx:getOpenLayoutElement()
+    if elem == nil then return end
+
+    var lc: config.LayoutConfig
+    lc.sizing.width.type = config.SIZING_FIXED
+    lc.sizing.width.size.min = width
+    lc.sizing.width.size.max = width
+    lc.sizing.width.percent = 0
+    lc.sizing.height.type = config.SIZING_FIXED
+    lc.sizing.height.size.min = height
+    lc.sizing.height.size.max = height
+    lc.sizing.height.percent = 0
+    lc.padding.left = padding
+    lc.padding.right = padding
+    lc.padding.top = padding
+    lc.padding.bottom = padding
+    lc.childGap = childGap
+    lc.childAlignment.x = config.ALIGN_X_LEFT
+    lc.childAlignment.y = config.ALIGN_Y_TOP
+    lc.layoutDirection = layoutDirection
+    elem.layoutConfig = ctx:storeLayoutConfig(lc)
+
+    var shared: config.SharedConfig
+    shared.backgroundColor.r = r
+    shared.backgroundColor.g = g
+    shared.backgroundColor.b = b
+    shared.backgroundColor.a = a
+    shared.cornerRadius.topLeft = 8
+    shared.cornerRadius.topRight = 8
+    shared.cornerRadius.bottomLeft = 8
+    shared.cornerRadius.bottomRight = 8
+    shared.userData = nil
+    var sharedPtr = ctx:storeSharedConfig(shared)
+    if sharedPtr ~= nil then
+        var cu: config.ElementConfigUnion
+        cu.sharedConfig = sharedPtr
+        ctx:attachElementConfig(cu, config.CONFIG_SHARED)
+    end
+end
+
+terra ui.ConfigureOpenElementBox(width: float, height: float, layoutDirection: config.LayoutDirection, padding: uint16, childGap: uint16, r: float, g: float, b: float, a: float)
+    ui.ConfigureOpenElementBoxForContext(ui.GetCurrentContext(), width, height, layoutDirection, padding, childGap, r, g, b, a)
+end
+
+terra ui.OpenStyledElementForContext(ctx: &ui.Context, width: float, height: float, layoutDirection: config.LayoutDirection, padding: uint16, childGap: uint16, r: float, g: float, b: float, a: float)
+    ui.OpenElementForContext(ctx)
+    ui.ConfigureOpenElementBoxForContext(ctx, width, height, layoutDirection, padding, childGap, r, g, b, a)
+end
+
+terra ui.OpenStyledElement(width: float, height: float, layoutDirection: config.LayoutDirection, padding: uint16, childGap: uint16, r: float, g: float, b: float, a: float)
+    ui.OpenStyledElementForContext(ui.GetCurrentContext(), width, height, layoutDirection, padding, childGap, r, g, b, a)
+end
+
+terra ui.CloseElementForContext(ctx: &ui.Context)
     if ctx ~= nil then
         ctx:closeElement()
     end
 end
 
+terra ui.CloseElement()
+    ui.CloseElementForContext(ui.GetCurrentContext())
+end
+
 terra ui.Context:openTextElement(text: config.String, textConfig: &config.TextConfig)
     if self.layoutElements.length >= self.layoutElements.capacity - 1 or self.maxElementsExceeded then
+        if not self.maxElementsExceeded then
+            ui.ReportError(config.ERROR_TYPE_ELEMENTS_CAPACITY_EXCEEDED,
+                config.String { isStaticallyAllocated = true, length = 73, chars = "Element capacity exceeded. Increase max element count and reinitialize context." })
+        end
         self.maxElementsExceeded = true
         return
     end
@@ -593,14 +1122,20 @@ terra ui.Context:openTextElement(text: config.String, textConfig: &config.TextCo
     
     if added ~= nil then
         added.childrenOrTextContent.textElementData = textDataPtr
+        self:registerElementId(added.id, idx)
         
         if textConfig ~= nil then
             if ui.measureTextFunction ~= nil then
-                var slice: string_mod.StringSlice
-                slice.length = text.length
-                slice.chars = text.chars
-                slice.baseChars = text.chars
-                textData.preferredDimensions = ui.measureTextFunction(slice, textConfig, ui.measureTextUserData)
+                var cached = self:measureTextCached(&text, textConfig)
+                if cached ~= nil then
+                    textData.preferredDimensions = cached.unwrappedDimensions
+                else
+                    var slice: string_mod.StringSlice
+                    slice.length = text.length
+                    slice.chars = text.chars
+                    slice.baseChars = text.chars
+                    textData.preferredDimensions = ui.measureTextFunction(slice, textConfig, ui.measureTextUserData)
+                end
 
                 var wrappedLine: layout.WrappedTextLine
                 wrappedLine.dimensions = textData.preferredDimensions
@@ -656,11 +1191,22 @@ terra ui.Context:openTextElement(text: config.String, textConfig: &config.TextCo
     parentElement.childrenOrTextContent.children.length = parentElement.childrenOrTextContent.children.length + 1
 end
 
-terra ui.OpenTextElement(text: config.String, textConfig: &config.TextConfig)
-    var ctx = ui.GetCurrentContext()
+terra ui.OpenTextElementForContext(ctx: &ui.Context, text: config.String, textConfig: &config.TextConfig)
     if ctx ~= nil then
         ctx:openTextElement(text, textConfig)
     end
+end
+
+terra ui.OpenTextElement(text: config.String, textConfig: &config.TextConfig)
+    ui.OpenTextElementForContext(ui.GetCurrentContext(), text, textConfig)
+end
+
+terra ui.GetElementId(idString: config.String) : hash.ElementId
+    return hash.HashString(idString, 0)
+end
+
+terra ui.GetElementIdWithIndex(idString: config.String, index: uint32) : hash.ElementId
+    return hash.HashStringWithOffset(idString, index, 0)
 end
 
 terra ui.SetMeasureTextFunction(measureTextFunction: MeasureTextFnType, userData: &opaque)
@@ -668,9 +1214,54 @@ terra ui.SetMeasureTextFunction(measureTextFunction: MeasureTextFnType, userData
     ui.measureTextUserData = userData
 end
 
+terra ui.SetErrorHandler(errorHandlerFunction: ErrorHandlerFnType, userData: &opaque)
+    ui.errorHandlerFunction = errorHandlerFunction
+    ui.errorHandlerUserData = userData
+end
+
+terra ui.ReportError(errorType: uint8, errorText: config.String)
+    if ui.errorHandlerFunction ~= nil then
+        var d: config.ErrorData
+        d.errorType = errorType
+        d.errorText = errorText
+        d.userData = ui.errorHandlerUserData
+        ui.errorHandlerFunction(d)
+    end
+end
+
 terra ui.SetQueryScrollOffsetFunction(queryScrollOffsetFunction: QueryScrollOffsetFnType, userData: &opaque)
     ui.queryScrollOffsetFunction = queryScrollOffsetFunction
     ui.queryScrollOffsetUserData = userData
+end
+
+terra ui.SetLayoutDimensionsForContext(ctx: &ui.Context, dimensions: config.Dimensions)
+    if ctx ~= nil then
+        ctx.layoutDimensions = dimensions
+    end
+end
+
+terra ui.SetLayoutDimensions(dimensions: config.Dimensions)
+    ui.SetLayoutDimensionsForContext(ui.GetCurrentContext(), dimensions)
+end
+
+terra ui.GetMaxElementCount() : int32
+    var ctx = ui.GetCurrentContext()
+    if ctx ~= nil then
+        return ctx.maxElementCount
+    end
+    return ui.defaultMaxElementCount
+end
+
+terra ui.SetMaxElementCount(maxElementCount: int32)
+    var v = maxElementCount
+    if v < 1 then v = 1 end
+    var ctx = ui.GetCurrentContext()
+    if ctx ~= nil then
+        ctx.maxElementCount = v
+    else
+        ui.defaultMaxElementCount = v
+        ui.defaultMaxMeasureTextWordCacheCount = v * 2
+    end
 end
 
 ui.EPSILON = 0.01
@@ -716,11 +1307,169 @@ terra ui.FindElementConfigWithType(elem: &layout.LayoutElement, cfgType: uint8) 
     return nil
 end
 
+terra ui.Context:decodeElementConfigs(elem: &layout.LayoutElement) : DecodedElementConfigs
+    var out: DecodedElementConfigs
+    out.text = nil
+    out.border = nil
+    out.floating = nil
+    out.clip = nil
+    out.aspect = nil
+    out.image = nil
+    out.custom = nil
+    out.shared = nil
+    if elem == nil or elem.elementConfigs.internalArray == nil then
+        return out
+    end
+
+    var i: int32 = 0
+    while i < elem.elementConfigs.length do
+        var c = &elem.elementConfigs.internalArray[i]
+        if c.configType == config.CONFIG_TEXT then
+            out.text = c.config.textConfig
+        elseif c.configType == config.CONFIG_BORDER then
+            out.border = c.config.borderConfig
+        elseif c.configType == config.CONFIG_FLOATING then
+            out.floating = c.config.floatingConfig
+        elseif c.configType == config.CONFIG_CLIP then
+            out.clip = c.config.clipConfig
+        elseif c.configType == config.CONFIG_ASPECT then
+            out.aspect = c.config.aspectRatioConfig
+        elseif c.configType == config.CONFIG_IMAGE then
+            out.image = c.config.imageConfig
+        elseif c.configType == config.CONFIG_CUSTOM then
+            out.custom = c.config.customConfig
+        elseif c.configType == config.CONFIG_SHARED then
+            out.shared = c.config.sharedConfig
+        end
+        i = i + 1
+    end
+    return out
+end
+
 terra ui.ElementIsOffscreen(ctx: &ui.Context, box: &config.BoundingBox) : bool
     return (box.x > ctx.layoutDimensions.width) or
            (box.y > ctx.layoutDimensions.height) or
            (box.x + box.width < 0) or
            (box.y + box.height < 0)
+end
+
+terra ui.SetDisableCulling(disable: bool)
+    ui.disableCulling = disable
+end
+
+terra ui.SetCullingEnabled(enabled: bool)
+    ui.disableCulling = not enabled
+end
+
+terra ui.SetDebugModeEnabled(enabled: bool)
+    ui.debugModeEnabled = enabled
+end
+
+terra ui.IsDebugModeEnabled() : bool
+    return ui.debugModeEnabled
+end
+
+terra ui.SetExternalScrollHandlingEnabled(enabled: bool)
+    ui.externalScrollHandlingEnabled = enabled
+end
+
+terra ui.MinMemorySize() : uint64
+    var ctx = ui.GetCurrentContext()
+    var maxElements = ui.defaultMaxElementCount
+    if ctx ~= nil and ctx.maxElementCount > 0 then
+        maxElements = ctx.maxElementCount
+    end
+    if maxElements <= 0 then
+        maxElements = 1
+    end
+    var maxMeasureWords = ui.defaultMaxMeasureTextWordCacheCount
+    if ctx ~= nil and ctx.maxMeasureTextCacheWordCount > 0 then
+        maxMeasureWords = ctx.maxMeasureTextCacheWordCount
+    end
+    if maxMeasureWords <= 0 then
+        maxMeasureWords = 1
+    end
+
+    var total: uint64 = 0
+    var allocations: int32 = 0
+
+    total = total + uint64(maxElements) * uint64(sizeof(layout.LayoutElement)); allocations = allocations + 1
+    total = total + uint64(maxElements) * uint64(sizeof(config.RenderCommand)); allocations = allocations + 1
+    total = total + uint64(maxElements) * uint64(sizeof(int32)); allocations = allocations + 1
+    total = total + uint64(maxElements * 4) * uint64(sizeof(int32)); allocations = allocations + 1
+    total = total + uint64(maxElements * 4) * uint64(sizeof(int32)); allocations = allocations + 1
+    total = total + uint64(maxElements) * uint64(sizeof(layout.TextElementData)); allocations = allocations + 1
+    total = total + uint64(maxElements) * uint64(sizeof(int32)); allocations = allocations + 1
+    total = total + uint64(maxElements) * uint64(sizeof(int32)); allocations = allocations + 1
+    total = total + uint64(maxElements) * uint64(sizeof(config.LayoutConfig)); allocations = allocations + 1
+    total = total + uint64(maxElements * 8) * uint64(sizeof(config.ElementConfig)); allocations = allocations + 1
+    total = total + uint64(maxElements) * uint64(sizeof(config.TextConfig)); allocations = allocations + 1
+    total = total + uint64(maxElements) * uint64(sizeof(config.AspectRatioConfig)); allocations = allocations + 1
+    total = total + uint64(maxElements) * uint64(sizeof(config.ImageConfig)); allocations = allocations + 1
+    total = total + uint64(maxElements) * uint64(sizeof(config.FloatingConfig)); allocations = allocations + 1
+    total = total + uint64(maxElements) * uint64(sizeof(config.ClipConfig)); allocations = allocations + 1
+    total = total + uint64(maxElements) * uint64(sizeof(config.CustomConfig)); allocations = allocations + 1
+    total = total + uint64(maxElements) * uint64(sizeof(config.BorderConfig)); allocations = allocations + 1
+    total = total + uint64(maxElements) * uint64(sizeof(config.SharedConfig)); allocations = allocations + 1
+    total = total + uint64(maxElements * 8) * uint64(sizeof(layout.WrappedTextLine)); allocations = allocations + 1
+    total = total + uint64(maxElements) * uint64(sizeof(layout.LayoutElementTreeRoot)); allocations = allocations + 1
+    total = total + uint64(maxElements) * uint64(sizeof(layout.LayoutElementTreeNode)); allocations = allocations + 1
+    total = total + uint64(maxElements) * uint64(sizeof(string_mod.String)); allocations = allocations + 1
+    total = total + uint64(maxElements) * uint64(sizeof(layout.ScrollContainerDataInternal)); allocations = allocations + 1
+    total = total + uint64(maxElements) * uint64(sizeof(layout.MeasureTextCacheItem)); allocations = allocations + 1
+    total = total + uint64(maxElements) * uint64(sizeof(int32)); allocations = allocations + 1
+    var hashBuckets = maxElements
+    if maxMeasureWords / 32 > hashBuckets then
+        hashBuckets = maxMeasureWords / 32
+    end
+    if hashBuckets < 1 then hashBuckets = 1 end
+    total = total + uint64(hashBuckets) * uint64(sizeof(int32)); allocations = allocations + 1
+    total = total + uint64(maxMeasureWords) * uint64(sizeof(layout.MeasuredWord)); allocations = allocations + 1
+    total = total + uint64(maxMeasureWords) * uint64(sizeof(int32)); allocations = allocations + 1
+    total = total + uint64(maxElements) * uint64(sizeof(uint32)); allocations = allocations + 1
+    total = total + uint64(maxElements * 4) * uint64(sizeof(uint32)); allocations = allocations + 1
+    total = total + uint64(maxElements * 4) * uint64(sizeof(int32)); allocations = allocations + 1
+    total = total + uint64(maxElements) * uint64(sizeof(config.BoundingBox)); allocations = allocations + 1
+    total = total + uint64(maxElements) * uint64(sizeof(bool)); allocations = allocations + 1
+
+    -- arena allocations are 64-byte aligned; reserve worst-case padding per allocation
+    total = total + uint64(allocations) * 64 + 128
+    return total
+end
+
+terra ui.GetMaxMeasureTextCacheWordCount() : int32
+    var ctx = ui.GetCurrentContext()
+    if ctx ~= nil then
+        return ctx.maxMeasureTextCacheWordCount
+    end
+    return ui.defaultMaxMeasureTextWordCacheCount
+end
+
+terra ui.SetMaxMeasureTextCacheWordCount(maxMeasureTextCacheWordCount: int32)
+    var v = maxMeasureTextCacheWordCount
+    if v < 1 then v = 1 end
+    var ctx = ui.GetCurrentContext()
+    if ctx ~= nil then
+        ctx.maxMeasureTextCacheWordCount = v
+    else
+        ui.defaultMaxMeasureTextWordCacheCount = v
+    end
+end
+
+terra ui.ResetMeasureTextCache()
+    var ctx = ui.GetCurrentContext()
+    if ctx == nil then return end
+    ctx.measureTextHashMapInternal.length = 0
+    ctx.measureTextHashMapInternalFreeList.length = 0
+    ctx.measuredWords.length = 0
+    ctx.measuredWordsFreeList.length = 0
+    ctx.measureTextHashMap.length = ctx.measureTextHashMap.capacity
+    var i: int32 = 0
+    while i < ctx.measureTextHashMap.length do
+        ctx.measureTextHashMap.internalArray[i] = 0
+        i = i + 1
+    end
+    ctx.measureTextHashMapInternal.length = 1
 end
 
 terra ui.GetAttachPosition(box: &config.BoundingBox, attach: uint8) : config.Vector2
@@ -815,7 +1564,7 @@ terra ui.Context:computeContentSize(elem: &layout.LayoutElement, layoutCfg: &con
     return contentSize
 end
 
-terra ui.Context:applyAspectRatios()
+terra ui.Context:applyAspectRatiosVertical()
     var i: int32 = 0
     while i < self.layoutElements.length do
         var elem = self.layoutElements:get(i)
@@ -824,21 +1573,231 @@ terra ui.Context:applyAspectRatios()
             if aspectCfgResult ~= nil and aspectCfgResult.config.aspectRatioConfig ~= nil then
                 var ratio = aspectCfgResult.config.aspectRatioConfig.aspectRatio
                 if ratio > ui.EPSILON and elem.layoutConfig ~= nil then
-                    var width = elem.dimensions.width
-                    var height = elem.dimensions.height
-                    if width > ui.EPSILON and elem.layoutConfig.sizing.height.type ~= config.SIZING_FIXED then
-                        height = width / ratio
-                    elseif height > ui.EPSILON and elem.layoutConfig.sizing.width.type ~= config.SIZING_FIXED then
-                        width = height * ratio
-                    end
-                    elem.dimensions.width = width
-                    elem.dimensions.height = height
-                    elem.minDimensions.width = width
-                    elem.minDimensions.height = height
+                    elem.dimensions.height = elem.dimensions.width / ratio
+                    elem.layoutConfig.sizing.height.size.max = elem.dimensions.height
                 end
             end
         end
         i = i + 1
+    end
+end
+
+terra ui.Context:applyAspectRatiosHorizontal()
+    var i: int32 = 0
+    while i < self.layoutElements.length do
+        var elem = self.layoutElements:get(i)
+        if elem ~= nil then
+            var aspectCfgResult = ui.FindElementConfigWithType(elem, config.CONFIG_ASPECT)
+            if aspectCfgResult ~= nil and aspectCfgResult.config.aspectRatioConfig ~= nil then
+                var ratio = aspectCfgResult.config.aspectRatioConfig.aspectRatio
+                if ratio > ui.EPSILON and elem.layoutConfig ~= nil then
+                    elem.dimensions.width = ratio * elem.dimensions.height
+                end
+            end
+        end
+        i = i + 1
+    end
+end
+
+terra ui.Context:wrapTextElements()
+    var textElementIndex: int32 = 0
+    while textElementIndex < self.textElementData.length do
+        var textElementData = self.textElementData:get(textElementIndex)
+        if textElementData ~= nil then
+            var previousWrapped = textElementData.wrappedLines
+            textElementData.wrappedLines.length = 0
+            if self.wrappedTextLines.length < self.wrappedTextLines.capacity then
+                textElementData.wrappedLines.internalArray = &self.wrappedTextLines.internalArray[self.wrappedTextLines.length]
+            else
+                textElementData.wrappedLines.internalArray = nil
+            end
+            var containerElement = self.layoutElements:get(textElementData.elementIndex)
+            if containerElement ~= nil then
+                var textCfgResult = ui.FindElementConfigWithType(containerElement, config.CONFIG_TEXT)
+                if textCfgResult ~= nil and textCfgResult.config.textConfig ~= nil then
+                    var textCfg = textCfgResult.config.textConfig
+                    var measureTextCacheItem = self:measureTextCached(&textElementData.text, textCfg)
+                    if measureTextCacheItem ~= nil then
+                        var lineWidth: float = 0
+                        var lineHeight: float = textElementData.preferredDimensions.height
+                        if textCfg.lineHeight > 0 then
+                            lineHeight = [float](textCfg.lineHeight)
+                        end
+                        var lineLengthChars: int32 = 0
+                        var lineStartOffset: int32 = 0
+
+                        if (not measureTextCacheItem.containsNewlines) and
+                            textElementData.preferredDimensions.width <= containerElement.dimensions.width then
+                            if self.wrappedTextLines.length < self.wrappedTextLines.capacity then
+                                var single: layout.WrappedTextLine
+                                single.dimensions = containerElement.dimensions
+                                single.line = textElementData.text
+                                self.wrappedTextLines:add(single)
+                                textElementData.wrappedLines.length = textElementData.wrappedLines.length + 1
+                            end
+                        else
+                            var oneChar: config.StringSlice
+                            oneChar.length = 1
+                            oneChar.chars = " "
+                            oneChar.baseChars = " "
+                            var spaceWidth = ui.measureTextFunction(oneChar, textCfg, ui.measureTextUserData).width
+
+                            var wordIndex = measureTextCacheItem.measuredWordsStartIndex
+                            while wordIndex ~= -1 do
+                                if self.wrappedTextLines.length > self.wrappedTextLines.capacity - 1 then
+                                    break
+                                end
+                                var measuredWord = self.measuredWords:get(wordIndex)
+                                if measuredWord == nil then
+                                    break
+                                end
+
+                                if lineLengthChars == 0 and lineWidth + measuredWord.width > containerElement.dimensions.width then
+                                    var line: layout.WrappedTextLine
+                                    line.dimensions.width = measuredWord.width
+                                    line.dimensions.height = lineHeight
+                                    line.line.isStaticallyAllocated = false
+                                    line.line.length = measuredWord.length
+                                    line.line.chars = &textElementData.text.chars[measuredWord.startOffset]
+                                    self.wrappedTextLines:add(line)
+                                    textElementData.wrappedLines.length = textElementData.wrappedLines.length + 1
+                                    wordIndex = measuredWord.next
+                                    lineStartOffset = measuredWord.startOffset + measuredWord.length
+                                elseif measuredWord.length == 0 or lineWidth + measuredWord.width > containerElement.dimensions.width then
+                                    var charIndex = max_i(lineStartOffset + lineLengthChars - 1, 0)
+                                    var finalCharIsSpace = textElementData.text.chars[charIndex] == 32
+                                    var trimChars: int32 = 0
+                                    if finalCharIsSpace then trimChars = 1 end
+
+                                    var line: layout.WrappedTextLine
+                                    line.dimensions.width = lineWidth
+                                    if finalCharIsSpace then
+                                        line.dimensions.width = line.dimensions.width - spaceWidth
+                                    end
+                                    line.dimensions.height = lineHeight
+                                    line.line.isStaticallyAllocated = false
+                                    line.line.length = lineLengthChars - trimChars
+                                    line.line.chars = &textElementData.text.chars[lineStartOffset]
+                                    self.wrappedTextLines:add(line)
+                                    textElementData.wrappedLines.length = textElementData.wrappedLines.length + 1
+                                    if lineLengthChars == 0 or measuredWord.length == 0 then
+                                        wordIndex = measuredWord.next
+                                    end
+                                    lineWidth = 0
+                                    lineLengthChars = 0
+                                    lineStartOffset = measuredWord.startOffset
+                                else
+                                    lineWidth = lineWidth + measuredWord.width + [float](textCfg.letterSpacing)
+                                    lineLengthChars = lineLengthChars + measuredWord.length
+                                    wordIndex = measuredWord.next
+                                end
+                            end
+
+                            if lineLengthChars > 0 and self.wrappedTextLines.length < self.wrappedTextLines.capacity then
+                                var line: layout.WrappedTextLine
+                                line.dimensions.width = lineWidth - [float](textCfg.letterSpacing)
+                                line.dimensions.height = lineHeight
+                                line.line.isStaticallyAllocated = false
+                                line.line.length = lineLengthChars
+                                line.line.chars = &textElementData.text.chars[lineStartOffset]
+                                self.wrappedTextLines:add(line)
+                                textElementData.wrappedLines.length = textElementData.wrappedLines.length + 1
+                            end
+                        end
+
+                        containerElement.dimensions.height = lineHeight * [float](textElementData.wrappedLines.length)
+                    else
+                        -- Preserve pre-populated wrapped lines when no measurement callback is available.
+                        textElementData.wrappedLines = previousWrapped
+                    end
+                end
+            end
+        end
+        textElementIndex = textElementIndex + 1
+    end
+end
+
+terra ui.Context:propagateHeightChangesToParents()
+    var dfsBuffer = self.layoutElementTreeNodeArray1
+    dfsBuffer.length = 0
+    var i: int32 = 0
+    while i < self.layoutElementTreeRoots.length do
+        var root = self.layoutElementTreeRoots:get(i)
+        if root ~= nil then
+            var node: layout.LayoutElementTreeNode
+            node.layoutElement = self.layoutElements:get(root.layoutElementIndex)
+            node.position.x = 0
+            node.position.y = 0
+            node.nextChildOffset.x = 0
+            node.nextChildOffset.y = 0
+            dfsBuffer:add(node)
+            self.layoutElementClipElementIds:set(dfsBuffer.length - 1, 0)
+        end
+        i = i + 1
+    end
+
+    while dfsBuffer.length > 0 do
+        var idx = dfsBuffer.length - 1
+        var currentNode = dfsBuffer:get(idx)
+        if currentNode == nil or currentNode.layoutElement == nil then
+            dfsBuffer.length = dfsBuffer.length - 1
+        else
+            var currentElement = currentNode.layoutElement
+            var visited = self.layoutElementClipElementIds:getValue(idx) ~= 0
+            if not visited then
+                self.layoutElementClipElementIds:set(idx, 1)
+                if ui.ElementHasConfig(currentElement, config.CONFIG_TEXT) or currentElement.childrenOrTextContent.children.length == 0 then
+                    dfsBuffer.length = dfsBuffer.length - 1
+                else
+                    var c: int32 = 0
+                    while c < currentElement.childrenOrTextContent.children.length do
+                        var child = self.layoutElements:get(currentElement.childrenOrTextContent.children.elements[c])
+                        if child ~= nil then
+                            var childNode: layout.LayoutElementTreeNode
+                            childNode.layoutElement = child
+                            childNode.position.x = 0
+                            childNode.position.y = 0
+                            childNode.nextChildOffset.x = 0
+                            childNode.nextChildOffset.y = 0
+                            dfsBuffer:add(childNode)
+                            self.layoutElementClipElementIds:set(dfsBuffer.length - 1, 0)
+                        end
+                        c = c + 1
+                    end
+                end
+            else
+                dfsBuffer.length = dfsBuffer.length - 1
+                var layoutCfg = currentElement.layoutConfig
+                if layoutCfg ~= nil then
+                    if layoutCfg.layoutDirection == config.LEFT_TO_RIGHT then
+                        var j: int32 = 0
+                        while j < currentElement.childrenOrTextContent.children.length do
+                            var childElement = self.layoutElements:get(currentElement.childrenOrTextContent.children.elements[j])
+                            if childElement ~= nil then
+                                var childHeightWithPadding = childElement.dimensions.height + [float](layoutCfg.padding.top + layoutCfg.padding.bottom)
+                                if childHeightWithPadding < currentElement.dimensions.height then
+                                    childHeightWithPadding = currentElement.dimensions.height
+                                end
+                                currentElement.dimensions.height = ui.clamp(childHeightWithPadding, layoutCfg.sizing.height.size.min, layoutCfg.sizing.height.size.max)
+                            end
+                            j = j + 1
+                        end
+                    elseif layoutCfg.layoutDirection == config.TOP_TO_BOTTOM then
+                        var contentHeight: float = [float](layoutCfg.padding.top + layoutCfg.padding.bottom)
+                        var j: int32 = 0
+                        while j < currentElement.childrenOrTextContent.children.length do
+                            var childElement = self.layoutElements:get(currentElement.childrenOrTextContent.children.elements[j])
+                            if childElement ~= nil then
+                                contentHeight = contentHeight + childElement.dimensions.height
+                            end
+                            j = j + 1
+                        end
+                        contentHeight = contentHeight + [float](max_i(currentElement.childrenOrTextContent.children.length - 1, 0) * layoutCfg.childGap)
+                        currentElement.dimensions.height = ui.clamp(contentHeight, layoutCfg.sizing.height.size.min, layoutCfg.sizing.height.size.max)
+                    end
+                end
+            end
+        end
     end
 end
 
@@ -865,11 +1824,21 @@ terra ui.Context:sizeContainersAlongAxis(xAxis: bool)
                             if rootElement.layoutConfig.sizing.width.type == config.SIZING_GROW then
                                 rootElement.dimensions.width = self.layoutDimensions.width
                             elseif rootElement.layoutConfig.sizing.width.type == config.SIZING_PERCENT then
+                                if rootElement.layoutConfig.sizing.width.percent > 1.0 and not self.warningPercentageOverOne then
+                                    self.warningPercentageOverOne = true
+                                    ui.ReportError(config.ERROR_TYPE_PERCENTAGE_OVER_1,
+                                        config.String { isStaticallyAllocated = true, length = 72, chars = "Sizing percent value over 1.0 detected. Percent values are expected in [0,1]." })
+                                end
                                 rootElement.dimensions.width = self.layoutDimensions.width * rootElement.layoutConfig.sizing.width.percent
                             end
                             if rootElement.layoutConfig.sizing.height.type == config.SIZING_GROW then
                                 rootElement.dimensions.height = self.layoutDimensions.height
                             elseif rootElement.layoutConfig.sizing.height.type == config.SIZING_PERCENT then
+                                if rootElement.layoutConfig.sizing.height.percent > 1.0 and not self.warningPercentageOverOne then
+                                    self.warningPercentageOverOne = true
+                                    ui.ReportError(config.ERROR_TYPE_PERCENTAGE_OVER_1,
+                                        config.String { isStaticallyAllocated = true, length = 72, chars = "Sizing percent value over 1.0 detected. Percent values are expected in [0,1]." })
+                                end
                                 rootElement.dimensions.height = self.layoutDimensions.height * rootElement.layoutConfig.sizing.height.percent
                             end
                         end
@@ -994,6 +1963,11 @@ terra ui.Context:sizeContainersAlongAxis(xAxis: bool)
                                 end
                                 
                                 if childSizing.type == config.SIZING_PERCENT then
+                                    if childSizing.percent > 1.0 and not self.warningPercentageOverOne then
+                                        self.warningPercentageOverOne = true
+                                        ui.ReportError(config.ERROR_TYPE_PERCENTAGE_OVER_1,
+                                            config.String { isStaticallyAllocated = true, length = 72, chars = "Sizing percent value over 1.0 detected. Percent values are expected in [0,1]." })
+                                    end
                                     var childSizePtr: &float
                                     
                                     if xAxis then
@@ -1248,9 +2222,11 @@ end
 
 terra ui.Context:calculateFinalLayout()
     self:sizeContainersAlongAxis(true)
-    self:applyAspectRatios()
+    self:wrapTextElements()
+    self:applyAspectRatiosVertical()
+    self:propagateHeightChangesToParents()
     self:sizeContainersAlongAxis(false)
-    self:applyAspectRatios()
+    self:applyAspectRatiosHorizontal()
     
     var sortMax: int32 = self.layoutElementTreeRoots.length - 1
     while sortMax > 0 do
@@ -1291,9 +2267,9 @@ terra ui.Context:calculateFinalLayout()
                 
                 var rootStartX: float = 0
                 var rootStartY: float = 0
-                var floatingCfgResult = ui.FindElementConfigWithType(rootElement, config.CONFIG_FLOATING)
-                if floatingCfgResult ~= nil and floatingCfgResult.config.floatingConfig ~= nil then
-                    var floatingCfg = floatingCfgResult.config.floatingConfig
+                var rootDecoded = self:decodeElementConfigs(rootElement)
+                if rootDecoded.floating ~= nil then
+                    var floatingCfg = rootDecoded.floating
                     if floatingCfg.attachTo ~= config.ATTACH_NONE then
                         var parentBox: config.BoundingBox
                         parentBox.x = 0
@@ -1305,14 +2281,21 @@ terra ui.Context:calculateFinalLayout()
                             if floatingCfg.attachTo == config.ATTACH_ELEMENT_WITH_ID and floatingCfg.parentId ~= 0 then
                                 parentId = floatingCfg.parentId
                             end
+                            var foundParent = false
                             var j: int32 = self.renderCommands.length - 1
                             while j >= 0 do
                                 var cmd = self.renderCommands:get(j)
                                 if cmd ~= nil and cmd.id == parentId then
                                     parentBox = cmd.boundingBox
+                                    foundParent = true
                                     break
                                 end
                                 j = j - 1
+                            end
+                            if not foundParent and floatingCfg.attachTo == config.ATTACH_ELEMENT_WITH_ID and not self.warningFloatingParentNotFound then
+                                self.warningFloatingParentNotFound = true
+                                ui.ReportError(config.ERROR_TYPE_FLOATING_CONTAINER_PARENT_NOT_FOUND,
+                                    config.String { isStaticallyAllocated = true, length = 92, chars = "Floating element parentId not found. Ensure parent exists and is declared before this floating element." })
                             end
                         end
                         var elementBox: config.BoundingBox
@@ -1350,6 +2333,7 @@ terra ui.Context:calculateFinalLayout()
                             dfsBuffer.length = dfsBuffer.length - 1
                         else
                             var layoutCfg = currentElement.layoutConfig
+                            var decoded = self:decodeElementConfigs(currentElement)
                             var visited = self.layoutElementClipElementIds:getValue(currentIdx) ~= 0
                             
                             if not visited then
@@ -1360,22 +2344,28 @@ terra ui.Context:calculateFinalLayout()
                                 boundingBox.y = currentElementTreeNode.position.y
                                 boundingBox.width = currentElement.dimensions.width
                                 boundingBox.height = currentElement.dimensions.height
-                                
-                                var sharedCfgResult = ui.FindElementConfigWithType(currentElement, config.CONFIG_SHARED)
-                                var emitRectangle = false
-                                
-                                if sharedCfgResult ~= nil then
-                                    var sharedCfg = sharedCfgResult.config.sharedConfig
-                                    if sharedCfg ~= nil and sharedCfg.backgroundColor.a > 0 then
-                                        emitRectangle = true
+
+                                var currentElementIndex = self:findElementIndexById(currentElement.id)
+                                if currentElementIndex >= 0 and currentElementIndex < self.elementBoundingBoxes.capacity then
+                                    self.elementBoundingBoxes.internalArray[currentElementIndex] = boundingBox
+                                    self.elementBoundingBoxValid.internalArray[currentElementIndex] = true
+                                end
+
+                                if ui.PointInsideBox(self.pointerInfo.position, boundingBox) then
+                                    if self.pointerOverIds.length < self.pointerOverIds.capacity then
+                                        self.pointerOverIds:add(currentElement.id)
                                     end
                                 end
                                 
-                                var offscreen = ui.ElementIsOffscreen(self, &boundingBox)
+                                var emitRectangle = false
+                                if decoded.shared ~= nil and decoded.shared.backgroundColor.a > 0 then
+                                    emitRectangle = true
+                                end
+                                
+                                var offscreen = (not ui.disableCulling) and ui.ElementIsOffscreen(self, &boundingBox)
                                 
                                 if not offscreen then
-                                    var clipCfgResultForScroll = ui.FindElementConfigWithType(currentElement, config.CONFIG_CLIP)
-                                    if clipCfgResultForScroll ~= nil and clipCfgResultForScroll.config.clipConfig ~= nil then
+                                    if decoded.clip ~= nil then
                                         var scrollData = self:findScrollContainerData(currentElement.id)
                                         if scrollData == nil then
                                             var newScroll: layout.ScrollContainerDataInternal
@@ -1388,8 +2378,8 @@ terra ui.Context:calculateFinalLayout()
                                             newScroll.pointerOrigin.y = 0
                                             newScroll.scrollMomentum.x = 0
                                             newScroll.scrollMomentum.y = 0
-                                            newScroll.scrollPosition.x = clipCfgResultForScroll.config.clipConfig.childOffset.x
-                                            newScroll.scrollPosition.y = clipCfgResultForScroll.config.clipConfig.childOffset.y
+                                            newScroll.scrollPosition.x = decoded.clip.childOffset.x
+                                            newScroll.scrollPosition.y = decoded.clip.childOffset.y
                                             newScroll.previousDelta.x = 0
                                             newScroll.previousDelta.y = 0
                                             newScroll.momentumTime = 0
@@ -1409,69 +2399,51 @@ terra ui.Context:calculateFinalLayout()
                                         end
                                     end
 
-                                    var cfgIdx: int32 = 0
-                                    while cfgIdx < currentElement.elementConfigs.length do
-                                        if currentElement.elementConfigs.internalArray ~= nil then
-                                            var elemCfg = &currentElement.elementConfigs.internalArray[cfgIdx]
-                                            
-                                            if elemCfg.configType == config.CONFIG_CLIP then
-                                                var cmd: config.RenderCommand
-                                                cmd.boundingBox = boundingBox
-                                                cmd.id = currentElement.id
-                                                cmd.commandType = config.RENDER_SCISSOR_START
-                                                cmd.zIndex = root.zIndex
-                                                
-                                                if elemCfg.config.clipConfig ~= nil then
-                                                    cmd.renderData.clip.horizontal = elemCfg.config.clipConfig.horizontal
-                                                    cmd.renderData.clip.vertical = elemCfg.config.clipConfig.vertical
-                                                end
-                                                
-                                                if self.renderCommands.length < self.renderCommands.capacity then
-                                                    self.renderCommands:add(cmd)
-                                                end
-                                                
-                                            elseif elemCfg.configType == config.CONFIG_IMAGE then
-                                                var cmd: config.RenderCommand
-                                                cmd.boundingBox = boundingBox
-                                                cmd.id = currentElement.id
-                                                cmd.commandType = config.RENDER_IMAGE
-                                                cmd.zIndex = root.zIndex
-                                                
-                                                if elemCfg.config.imageConfig ~= nil then
-                                                    cmd.renderData.image.imageData = elemCfg.config.imageConfig.imageData
-                                                end
-                                                if sharedCfgResult ~= nil and sharedCfgResult.config.sharedConfig ~= nil then
-                                                    cmd.renderData.image.backgroundColor = sharedCfgResult.config.sharedConfig.backgroundColor
-                                                    cmd.renderData.image.cornerRadius = sharedCfgResult.config.sharedConfig.cornerRadius
-                                                end
-                                                
-                                                if self.renderCommands.length < self.renderCommands.capacity then
-                                                    self.renderCommands:add(cmd)
-                                                end
-                                                emitRectangle = false
-                                                
-                                            elseif elemCfg.configType == config.CONFIG_CUSTOM then
-                                                var cmd: config.RenderCommand
-                                                cmd.boundingBox = boundingBox
-                                                cmd.id = currentElement.id
-                                                cmd.commandType = config.RENDER_CUSTOM
-                                                cmd.zIndex = root.zIndex
-                                                
-                                                if elemCfg.config.customConfig ~= nil then
-                                                    cmd.renderData.custom.customData = elemCfg.config.customConfig.customData
-                                                end
-                                                if sharedCfgResult ~= nil and sharedCfgResult.config.sharedConfig ~= nil then
-                                                    cmd.renderData.custom.backgroundColor = sharedCfgResult.config.sharedConfig.backgroundColor
-                                                    cmd.renderData.custom.cornerRadius = sharedCfgResult.config.sharedConfig.cornerRadius
-                                                end
-                                                
-                                                if self.renderCommands.length < self.renderCommands.capacity then
-                                                    self.renderCommands:add(cmd)
-                                                end
-                                                emitRectangle = false
-                                            end
+                                    if decoded.clip ~= nil then
+                                        var cmd: config.RenderCommand
+                                        cmd.boundingBox = boundingBox
+                                        cmd.id = currentElement.id
+                                        cmd.commandType = config.RENDER_SCISSOR_START
+                                        cmd.zIndex = root.zIndex
+                                        cmd.renderData.clip.horizontal = decoded.clip.horizontal
+                                        cmd.renderData.clip.vertical = decoded.clip.vertical
+                                        if self.renderCommands.length < self.renderCommands.capacity then
+                                            self.renderCommands:add(cmd)
                                         end
-                                        cfgIdx = cfgIdx + 1
+                                    end
+
+                                    if decoded.image ~= nil then
+                                        var cmd: config.RenderCommand
+                                        cmd.boundingBox = boundingBox
+                                        cmd.id = currentElement.id
+                                        cmd.commandType = config.RENDER_IMAGE
+                                        cmd.zIndex = root.zIndex
+                                        cmd.renderData.image.imageData = decoded.image.imageData
+                                        if decoded.shared ~= nil then
+                                            cmd.renderData.image.backgroundColor = decoded.shared.backgroundColor
+                                            cmd.renderData.image.cornerRadius = decoded.shared.cornerRadius
+                                        end
+                                        if self.renderCommands.length < self.renderCommands.capacity then
+                                            self.renderCommands:add(cmd)
+                                        end
+                                        emitRectangle = false
+                                    end
+
+                                    if decoded.custom ~= nil then
+                                        var cmd: config.RenderCommand
+                                        cmd.boundingBox = boundingBox
+                                        cmd.id = currentElement.id
+                                        cmd.commandType = config.RENDER_CUSTOM
+                                        cmd.zIndex = root.zIndex
+                                        cmd.renderData.custom.customData = decoded.custom.customData
+                                        if decoded.shared ~= nil then
+                                            cmd.renderData.custom.backgroundColor = decoded.shared.backgroundColor
+                                            cmd.renderData.custom.cornerRadius = decoded.shared.cornerRadius
+                                        end
+                                        if self.renderCommands.length < self.renderCommands.capacity then
+                                            self.renderCommands:add(cmd)
+                                        end
+                                        emitRectangle = false
                                     end
                                     
                                     if emitRectangle then
@@ -1481,10 +2453,10 @@ terra ui.Context:calculateFinalLayout()
                                         cmd.commandType = config.RENDER_RECTANGLE
                                         cmd.zIndex = root.zIndex
                                         
-                                        if sharedCfgResult ~= nil and sharedCfgResult.config.sharedConfig ~= nil then
-                                            cmd.renderData.rectangle.backgroundColor = sharedCfgResult.config.sharedConfig.backgroundColor
-                                            cmd.renderData.rectangle.cornerRadius = sharedCfgResult.config.sharedConfig.cornerRadius
-                                            cmd.userData = sharedCfgResult.config.sharedConfig.userData
+                                        if decoded.shared ~= nil then
+                                            cmd.renderData.rectangle.backgroundColor = decoded.shared.backgroundColor
+                                            cmd.renderData.rectangle.cornerRadius = decoded.shared.cornerRadius
+                                            cmd.userData = decoded.shared.userData
                                         end
                                         
                                         if self.renderCommands.length < self.renderCommands.capacity then
@@ -1492,10 +2464,8 @@ terra ui.Context:calculateFinalLayout()
                                         end
                                     end
                                     
-                                    if ui.ElementHasConfig(currentElement, config.CONFIG_TEXT) then
-                                        var textCfgResult = ui.FindElementConfigWithType(currentElement, config.CONFIG_TEXT)
-                                        if textCfgResult ~= nil and textCfgResult.config.textConfig ~= nil then
-                                            var textCfg = textCfgResult.config.textConfig
+                                    if decoded.text ~= nil then
+                                            var textCfg = decoded.text
                                             var textData = currentElement.childrenOrTextContent.textElementData
                                             
                                             if textData ~= nil then
@@ -1549,11 +2519,10 @@ terra ui.Context:calculateFinalLayout()
                                                     lineIndex = lineIndex + 1
                                                 end
                                             end
-                                        end
                                     end
                                 end
                                 
-                                if not ui.ElementHasConfig(currentElement, config.CONFIG_TEXT) then
+                                if decoded.text == nil then
                                     var childCount = currentElement.childrenOrTextContent.children.length
                                     if childCount > 0 then
                                         var contentSize: config.Dimensions
@@ -1613,7 +2582,7 @@ terra ui.Context:calculateFinalLayout()
                                     end
                                 end
                                 
-                                if not ui.ElementHasConfig(currentElement, config.CONFIG_TEXT) then
+                                if decoded.text == nil then
                                     var childCount = currentElement.childrenOrTextContent.children.length
                                     if childCount > 0 then
                                         dfsBuffer.length = dfsBuffer.length + childCount
@@ -1628,15 +2597,14 @@ terra ui.Context:calculateFinalLayout()
                                                 
                                                 var scrollOffsetX: float = 0
                                                 var scrollOffsetY: float = 0
-                                                var clipCfgForChildOffset = ui.FindElementConfigWithType(currentElement, config.CONFIG_CLIP)
-                                                if clipCfgForChildOffset ~= nil and clipCfgForChildOffset.config.clipConfig ~= nil then
+                                                if decoded.clip ~= nil then
                                                     var scrollData = self:findScrollContainerData(currentElement.id)
                                                     if scrollData ~= nil then
                                                         scrollOffsetX = scrollData.scrollPosition.x
                                                         scrollOffsetY = scrollData.scrollPosition.y
                                                     else
-                                                        scrollOffsetX = clipCfgForChildOffset.config.clipConfig.childOffset.x
-                                                        scrollOffsetY = clipCfgForChildOffset.config.clipConfig.childOffset.y
+                                                        scrollOffsetX = decoded.clip.childOffset.x
+                                                        scrollOffsetY = decoded.clip.childOffset.y
                                                     end
                                                 end
                                                 
@@ -1690,7 +2658,7 @@ terra ui.Context:calculateFinalLayout()
                             else
                                 var childCount = currentElement.childrenOrTextContent.children.length
                                 
-                                if ui.ElementHasConfig(currentElement, config.CONFIG_CLIP) then
+                                if decoded.clip ~= nil then
                                     if self.renderCommands.length < self.renderCommands.capacity then
                                         var cmd: config.RenderCommand
                                         cmd.id = currentElement.id
@@ -1699,7 +2667,7 @@ terra ui.Context:calculateFinalLayout()
                                     end
                                 end
                                 
-                                if ui.ElementHasConfig(currentElement, config.CONFIG_BORDER) then
+                                if decoded.border ~= nil then
                                     var borderBoundingBox: config.BoundingBox
                                     borderBoundingBox.x = currentElementTreeNode.position.x
                                     borderBoundingBox.y = currentElementTreeNode.position.y
@@ -1707,12 +2675,8 @@ terra ui.Context:calculateFinalLayout()
                                     borderBoundingBox.height = currentElement.dimensions.height
                                     
                                     if not ui.ElementIsOffscreen(self, &borderBoundingBox) then
-                                        var borderCfgResult = ui.FindElementConfigWithType(currentElement, config.CONFIG_BORDER)
-                                        if borderCfgResult ~= nil and borderCfgResult.config.borderConfig ~= nil then
-                                            var borderCfg = borderCfgResult.config.borderConfig
-                                            
-                                            if borderCfg.color.a > 0 then
-                                                var borderSharedCfgResult = ui.FindElementConfigWithType(currentElement, config.CONFIG_SHARED)
+                                        var borderCfg = decoded.border
+                                        if borderCfg.color.a > 0 then
                                                 
                                                 var cmd: config.RenderCommand
                                                 cmd.boundingBox = borderBoundingBox
@@ -1722,9 +2686,9 @@ terra ui.Context:calculateFinalLayout()
                                                 cmd.renderData.border.color = borderCfg.color
                                                 cmd.renderData.border.width = borderCfg.width
                                                 
-                                                if borderSharedCfgResult ~= nil and borderSharedCfgResult.config.sharedConfig ~= nil then
-                                                    cmd.renderData.border.cornerRadius = borderSharedCfgResult.config.sharedConfig.cornerRadius
-                                                    cmd.userData = borderSharedCfgResult.config.sharedConfig.userData
+                                                if decoded.shared ~= nil then
+                                                    cmd.renderData.border.cornerRadius = decoded.shared.cornerRadius
+                                                    cmd.userData = decoded.shared.userData
                                                 end
                                                 
                                                 if self.renderCommands.length < self.renderCommands.capacity then
@@ -1797,7 +2761,6 @@ terra ui.Context:calculateFinalLayout()
                                                     end
                                                 end
                                             end
-                                        end
                                     end
                                 end
                                 
@@ -1816,10 +2779,89 @@ terra ui.PointInsideBox(point: config.Vector2, box: config.BoundingBox) : bool
     return point.x >= box.x and point.x <= box.x + box.width and point.y >= box.y and point.y <= box.y + box.height
 end
 
-terra ui.SetPointerState(position: config.Vector2, pointerDown: bool)
-    var ctx = ui.GetCurrentContext()
+terra ui.SetPointerStateForContext(ctx: &ui.Context, position: config.Vector2, pointerDown: bool)
     if ctx == nil then return end
     ctx.pointerInfo.position = position
+
+    ctx.pointerOverIds.length = 0
+    var dfsBuffer = ctx.reusableElementIndexBuffer
+    var rootIndex: int32 = ctx.layoutElementTreeRoots.length - 1
+    while rootIndex >= 0 do
+        var root = ctx.layoutElementTreeRoots:get(rootIndex)
+        var foundInRoot = false
+        dfsBuffer.length = 0
+        if root ~= nil then
+            dfsBuffer:add(root.layoutElementIndex)
+        end
+        while dfsBuffer.length > 0 do
+            var elemIndex = dfsBuffer:getValue(dfsBuffer.length - 1)
+            dfsBuffer.length = dfsBuffer.length - 1
+            var elem = ctx.layoutElements:get(elemIndex)
+            if elem ~= nil then
+                var mapIndex = ctx:findElementIndexById(elem.id)
+                if mapIndex >= 0 and mapIndex < ctx.elementBoundingBoxes.capacity and ctx.elementBoundingBoxValid.internalArray[mapIndex] then
+                    var box = ctx.elementBoundingBoxes.internalArray[mapIndex]
+                    var inside = ui.PointInsideBox(position, box)
+                    if inside and not ui.externalScrollHandlingEnabled then
+                        var clipElementId = ctx.layoutElementClipElementIds:getValue(elemIndex)
+                        if clipElementId ~= 0 then
+                            var clipMapIndex = ctx:findElementIndexById([uint32](clipElementId))
+                            if clipMapIndex >= 0 and clipMapIndex < ctx.elementBoundingBoxes.capacity and ctx.elementBoundingBoxValid.internalArray[clipMapIndex] then
+                                var clipBox = ctx.elementBoundingBoxes.internalArray[clipMapIndex]
+                                if not ui.PointInsideBox(position, clipBox) then
+                                    inside = false
+                                end
+                            end
+                        end
+                    end
+                    if inside then
+                        if ctx.pointerOverIds.length < ctx.pointerOverIds.capacity then
+                            ctx.pointerOverIds:add(elem.id)
+                        end
+                        foundInRoot = true
+                        var h: int32 = 0
+                        while h < ctx.hoverBindings.length do
+                            var hb = ctx.hoverBindings:get(h)
+                            if hb ~= nil and hb.callback ~= nil and hb.elementId == elem.id then
+                                var id: hash.ElementId
+                                id.id = hb.elementId
+                                id.offset = 0
+                                id.baseId = hb.elementId
+                                id.stringId.isStaticallyAllocated = false
+                                id.stringId.length = 0
+                                id.stringId.chars = nil
+                                hb.callback(id, ctx.pointerInfo, hb.userData)
+                            end
+                            h = h + 1
+                        end
+                    end
+                end
+
+                if not ui.ElementHasConfig(elem, config.CONFIG_TEXT) then
+                    var childIndex: int32 = [int32](elem.childrenOrTextContent.children.length) - 1
+                    while childIndex >= 0 do
+                        var childElemIndex = elem.childrenOrTextContent.children.elements[childIndex]
+                        dfsBuffer:add(childElemIndex)
+                        childIndex = childIndex - 1
+                    end
+                end
+            end
+        end
+
+        if foundInRoot and root ~= nil then
+            var rootElem = ctx.layoutElements:get(root.layoutElementIndex)
+            if rootElem ~= nil and ui.ElementHasConfig(rootElem, config.CONFIG_FLOATING) then
+                var floatingCfg = ui.FindElementConfigWithType(rootElem, config.CONFIG_FLOATING)
+                if floatingCfg ~= nil and floatingCfg.config.floatingConfig ~= nil then
+                    if floatingCfg.config.floatingConfig.pointerCaptureMode == config.POINTER_CAPTURE then
+                        break
+                    end
+                end
+            end
+        end
+        rootIndex = rootIndex - 1
+    end
+
     if pointerDown then
         if ctx.pointerInfo.state == config.POINTER_PRESSED_THIS_FRAME then
             ctx.pointerInfo.state = config.POINTER_PRESSED
@@ -1835,8 +2877,70 @@ terra ui.SetPointerState(position: config.Vector2, pointerDown: bool)
     end
 end
 
-terra ui.UpdateScrollContainers(enableDragScrolling: bool, scrollDelta: config.Vector2, deltaTime: float)
+terra ui.SetPointerState(position: config.Vector2, pointerDown: bool)
+    ui.SetPointerStateForContext(ui.GetCurrentContext(), position, pointerDown)
+end
+
+terra ui.Hovered() : bool
     var ctx = ui.GetCurrentContext()
+    if ctx == nil then return false end
+    return ctx.pointerOverIds.length > 0
+end
+
+terra ui.PointerOver(id: hash.ElementId) : bool
+    var ctx = ui.GetCurrentContext()
+    if ctx == nil then return false end
+    var i: int32 = 0
+    while i < ctx.pointerOverIds.length do
+        if ctx.pointerOverIds:getValue(i) == id.id then
+            return true
+        end
+        i = i + 1
+    end
+    return false
+end
+
+terra ui.OnHoverCurrent(callback: HoverCallbackFnType, userData: &opaque)
+    var ctx = ui.GetCurrentContext()
+    if ctx == nil or callback == nil then return end
+    var openElem = ctx:getOpenLayoutElement()
+    if openElem == nil then return end
+    var i: int32 = 0
+    while i < ctx.hoverBindings.length do
+        var hb = ctx.hoverBindings:get(i)
+        if hb ~= nil and hb.elementId == openElem.id then
+            hb.callback = callback
+            hb.userData = userData
+            return
+        end
+        i = i + 1
+    end
+    if ctx.hoverBindings.length < ctx.hoverBindings.capacity then
+        var hb: HoverBinding
+        hb.elementId = openElem.id
+        hb.callback = callback
+        hb.userData = userData
+        ctx.hoverBindings:add(hb)
+    end
+end
+
+terra ui.OnHover(id: hash.ElementId, callback: HoverCallbackFnType, userData: &opaque)
+    if callback == nil then return end
+    if ui.PointerOver(id) then
+        var ctx = ui.GetCurrentContext()
+        if ctx ~= nil then
+            callback(id, ctx.pointerInfo, userData)
+        else
+            var p: config.PointerData
+            p.position.x = 0
+            p.position.y = 0
+            p.state = config.POINTER_RELEASED
+            callback(id, p, userData)
+        end
+    end
+end
+
+terra ui.UpdateScrollContainersForContext(ctx: &ui.Context, enableDragScrolling: bool, scrollDelta: config.Vector2, deltaTime: float)
     if ctx == nil then return end
     var isPointerActive = enableDragScrolling and (ctx.pointerInfo.state == config.POINTER_PRESSED or ctx.pointerInfo.state == config.POINTER_PRESSED_THIS_FRAME)
 
@@ -1931,6 +3035,10 @@ terra ui.UpdateScrollContainers(enableDragScrolling: bool, scrollDelta: config.V
     end
 end
 
+terra ui.UpdateScrollContainers(enableDragScrolling: bool, scrollDelta: config.Vector2, deltaTime: float)
+    ui.UpdateScrollContainersForContext(ui.GetCurrentContext(), enableDragScrolling, scrollDelta, deltaTime)
+end
+
 terra ui.GetScrollOffset() : config.Vector2
     var ctx = ui.GetCurrentContext()
     var zero: config.Vector2
@@ -1987,8 +3095,39 @@ terra ui.GetScrollContainerData(id: hash.ElementId) : config.ScrollContainerData
     return out
 end
 
+terra ui.GetElementData(id: hash.ElementId) : config.ElementData
+    var out: config.ElementData
+    out.boundingBox.x = 0
+    out.boundingBox.y = 0
+    out.boundingBox.width = 0
+    out.boundingBox.height = 0
+    out.found = false
+
+    var ctx = ui.GetCurrentContext()
+    if ctx == nil then
+        return out
+    end
+
+    var idx = ctx:findElementIndexById(id.id)
+    if idx < 0 or idx >= ctx.elementBoundingBoxes.capacity then
+        return out
+    end
+
+    if not ctx.elementBoundingBoxValid.internalArray[idx] then
+        return out
+    end
+
+    out.boundingBox = ctx.elementBoundingBoxes.internalArray[idx]
+    out.found = true
+    return out
+end
+
 terra ui.Context:endLayout()
     self:closeElement()
+    if self.openLayoutElementStack.length > 0 then
+        ui.ReportError(config.ERROR_TYPE_UNBALANCED_OPEN_CLOSE,
+            config.String { isStaticallyAllocated = true, length = 111, chars = "Unbalanced OpenElement/CloseElement calls. There were still open layout elements when EndLayout executed." })
+    end
     self:calculateFinalLayout()
     return &self.renderCommands
 end
@@ -1999,6 +3138,67 @@ terra ui.EndLayout() : &RenderCommandArray
         return ctx:endLayout()
     end
     return nil
+end
+
+terra ui.FinalizeLayoutForContext(ctx: &ui.Context) : int32
+    if ctx == nil then
+        return 0
+    end
+    var cmds = ctx:endLayout()
+    if cmds == nil then
+        return 0
+    end
+    return cmds.length
+end
+
+terra ui.FinalizeLayout() : int32
+    return ui.FinalizeLayoutForContext(ui.GetCurrentContext())
+end
+
+terra ui.GetRenderCommandCountForContext(ctx: &ui.Context) : int32
+    if ctx == nil then
+        return 0
+    end
+    return ctx.renderCommands.length
+end
+
+terra ui.GetRenderCommandCount() : int32
+    return ui.GetRenderCommandCountForContext(ui.GetCurrentContext())
+end
+
+terra ui.GetRenderCommandBufferForContext(ctx: &ui.Context) : &config.RenderCommand
+    if ctx == nil then
+        return nil
+    end
+    if ctx.renderCommands.length <= 0 then
+        return nil
+    end
+    return ctx.renderCommands.internalArray
+end
+
+terra ui.GetRenderCommandBuffer() : &config.RenderCommand
+    return ui.GetRenderCommandBufferForContext(ui.GetCurrentContext())
+end
+
+terra ui.GetRenderCommandAtForContext(ctx: &ui.Context, index: int32) : config.RenderCommand
+    var out: config.RenderCommand
+    out.boundingBox.x = 0
+    out.boundingBox.y = 0
+    out.boundingBox.width = 0
+    out.boundingBox.height = 0
+    out.commandType = config.RENDER_NONE
+
+    if ctx == nil then
+        return out
+    end
+    if index < 0 or index >= ctx.renderCommands.length then
+        return out
+    end
+    return ctx.renderCommands.internalArray[index]
+end
+
+terra ui.GetRenderCommandAt(index: int32) : config.RenderCommand
+    return ui.GetRenderCommandAtForContext(ui.GetCurrentContext(), index)
 end
 
 return ui

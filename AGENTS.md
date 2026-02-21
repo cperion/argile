@@ -1,42 +1,39 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-This repository is at project start: we are building a Terra library by porting behavior from `ref/clay.h`, and most content is documentation.
-- `docs/design.md`: architecture blueprint for the Terra-native UI engine.
-- `docs/ai-guide.md`: implementation mapping from Clay C APIs to Terra targets.
-- `docs/terra/getting-started.md` and `docs/terra/api.md`: Terra setup, syntax, and semantics references.
-- `ref/clay.h`: upstream Clay reference header used for exact behavior parity.
-
-When code is added, separate concerns (`src/`, `tests/`, `examples/`) and mirror `ui` namespace names.
+This repository ports `ref/clay.h` into the Argile Terra-native `ui` library and maintains parity-focused tests and benchmarks.
+- `src/`: Terra implementation modules (`arena`, `array`, `config`, `layout`, `context`, `init`).
+- `tests/`: Terra test suites (`test_foundation.t`, `test_layout.t`).
+- `bench/`: LuaJIT benchmark runner and docs.
+- `tools/`: build scripts and benchmark backends (`build_argile.t`, `build_bench.sh`, `build_terra.t`, `terra_bench_api.t`, `clay_bench.c`, `ffi_gen.t`).
+- `docs/design.md`, `docs/ai-guide.md`, `docs/terra/*`: architectural and Terra-language references.
+- `ref/clay.h`: authoritative Clay behavior reference.
 
 ## Build, Test, and Development Commands
-No project-local build/test scripts are committed yet. Current useful commands are:
-- `rg --files`: list tracked project files quickly.
-- `rg "pattern" docs ref`: locate function or struct references.
-- `wc -l ref/clay.h`: gauge reference file size before targeted ports.
-
-If you add runnable code, document stable entry points in `README.md` (for example `make test`, `make lint`).
+Use these commands as the default workflow:
+- `terra tests/test_foundation.t`: core type/array/hash/config/context checks.
+- `terra tests/test_layout.t`: layout pipeline, render commands, and advanced feature checks.
+- `./tools/build_argile.t`: compiles the Argile shared library (`build/libargile.so`) and generates `build/argile_api_ffi.lua`.
+- `make build`: runs `tools/build_argile.t`, ensuring `build/libargile.so` + `build/argile_api_ffi.lua` are regenerated.
+- `luajit bench/compare.lua quick|heavy|stress`: run Clay-vs-Argile benchmark suites and print final comparison table.
+- `rg "pattern" src tests tools`: fast codebase search.
 
 ## Coding Style & Naming Conventions
-Follow conventions from `docs/design.md`, `docs/ai-guide.md`, and `docs/terra/*`:
-- Use the `ui` namespace; avoid `Clay_` / `CLAY__` prefixes in new Terra code.
-- Prefer data-oriented, flat-array designs and arena allocation patterns.
-- Keep ports behaviorally exact to `ref/clay.h`; change syntax, not logic.
-- Before adding Terra syntax features, verify behavior and idioms against `docs/terra/api.md`.
+- Keep Terra API under `ui` namespace; do not leak `Clay_`/`CLAY__` into new Terra-facing APIs.
+- Preserve Clay behavior exactly when porting algorithms; adapt syntax only.
+- Prefer data-oriented flat arrays and arena allocation.
+- Use `while` loops for flow that would otherwise depend on `continue`.
+- Validate Terra semantics against `docs/terra/api.md` before introducing advanced metaprogramming or ABI changes.
 
-## Testing Guidelines
-Until a test harness exists, validate ports by deterministic comparison against Clay behavior.
-- Place future tests under `tests/` with names like `*_spec.t` or `test_*.terra` (pick one pattern and stay consistent).
-- Cover layout sizing passes, text wrapping, hash stability, and render command ordering.
-- Add regression tests for each bug fix in layout math or hashing.
+## Testing & Benchmarking Guidelines
+- Add regression tests for every layout/math/hash bug fix.
+- When adding benchmark scenarios, implement the same scenario in both backends:
+  - Terra: `tools/terra_bench_api.t`
+  - Clay: `tools/clay_bench.c`
+- Keep exported benchmark function signatures identical across both libraries.
+- Treat benchmark checksums as backend-internal consistency checks; compare performance metrics in the final table.
 
-## Commit & Pull Request Guidelines
-Git history is not available in this workspace snapshot, so adopt a strict baseline:
-- Commit format: `type(scope): imperative summary` (for example `feat(layout): port y-axis sizing pass`).
-- Keep commits focused; avoid mixing refactors with behavior changes.
-- PRs should include: purpose, files changed, linked sections from `docs/ai-guide.md` and `docs/terra/*`, and validation notes.
-- Include before/after output or screenshots for visual layout changes.
-
-## Security & Configuration Tips
-- Treat `ref/clay.h` as authoritative reference input; avoid editing it unless intentionally updating upstream parity.
-- Do not introduce dynamic allocation paths that bypass the arena model without explicit design approval.
+## Commit & PR Guidelines
+- Commit format: `type(scope): imperative summary`.
+- Keep commits focused (feature, fix, or benchmark change; avoid mixed refactors).
+- PRs should include: intent, changed files, validation commands run, and benchmark profile used when performance-relevant.

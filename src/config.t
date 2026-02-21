@@ -90,6 +90,17 @@ ui.CONFIG_TEXT = 6
 ui.CONFIG_CUSTOM = 7
 ui.CONFIG_SHARED = 8
 
+ui.ErrorType = uint8
+ui.ERROR_TYPE_TEXT_MEASUREMENT_FUNCTION_NOT_PROVIDED = 0
+ui.ERROR_TYPE_ARENA_CAPACITY_EXCEEDED = 1
+ui.ERROR_TYPE_ELEMENTS_CAPACITY_EXCEEDED = 2
+ui.ERROR_TYPE_TEXT_MEASUREMENT_CAPACITY_EXCEEDED = 3
+ui.ERROR_TYPE_DUPLICATE_ID = 4
+ui.ERROR_TYPE_FLOATING_CONTAINER_PARENT_NOT_FOUND = 5
+ui.ERROR_TYPE_PERCENTAGE_OVER_1 = 6
+ui.ERROR_TYPE_INTERNAL_ERROR = 7
+ui.ERROR_TYPE_UNBALANCED_OPEN_CLOSE = 8
+
 -- ============================================
 -- BASIC DATA TYPES
 -- ============================================
@@ -312,6 +323,12 @@ ui.ElementData = struct {
 ui.PointerData = struct {
     position : ui.Vector2,
     state : ui.PointerState
+}
+
+ui.ErrorData = struct {
+    errorType : ui.ErrorType,
+    errorText : ui.String,
+    userData : &opaque
 }
 
 -- ============================================

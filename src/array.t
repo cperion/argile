@@ -26,6 +26,7 @@ ui.Array = terralib.memoize(function(T)
         self.internalArray = [&T](mem)
         return true
     end
+    ArrayT.methods.allocate:setinlined(true)
     
     terra ArrayT:add(item : T) : &T
         if self.length < self.capacity then
@@ -36,6 +37,7 @@ ui.Array = terralib.memoize(function(T)
         end
         return nil
     end
+    ArrayT.methods.add:setinlined(true)
     
     terra ArrayT:get(index : int32) : &T
         if index >= 0 and index < self.length then
@@ -43,6 +45,7 @@ ui.Array = terralib.memoize(function(T)
         end
         return nil
     end
+    ArrayT.methods.get:setinlined(true)
     
     terra ArrayT:getValue(index : int32) : T
         if index >= 0 and index < self.length then
@@ -51,6 +54,7 @@ ui.Array = terralib.memoize(function(T)
         var empty : T
         return empty
     end
+    ArrayT.methods.getValue:setinlined(true)
     
     terra ArrayT:set(index : int32, value : T)
         if index >= 0 and index < self.capacity then
@@ -60,6 +64,7 @@ ui.Array = terralib.memoize(function(T)
             end
         end
     end
+    ArrayT.methods.set:setinlined(true)
     
     terra ArrayT:removeSwapback(index : int32) : T
         if index >= 0 and index < self.length then
@@ -71,10 +76,12 @@ ui.Array = terralib.memoize(function(T)
         var empty : T
         return empty
     end
+    ArrayT.methods.removeSwapback:setinlined(true)
     
     terra ArrayT:clear()
         self.length = 0
     end
+    ArrayT.methods.clear:setinlined(true)
     
     return ArrayT
 end)
@@ -91,6 +98,7 @@ ui.Slice = terralib.memoize(function(T)
         end
         return nil
     end
+    SliceT.methods.get:setinlined(true)
     
     terra SliceT:getValue(index : int32) : T
         if index >= 0 and index < self.length then
@@ -99,6 +107,7 @@ ui.Slice = terralib.memoize(function(T)
         var empty : T
         return empty
     end
+    SliceT.methods.getValue:setinlined(true)
     
     return SliceT
 end)
