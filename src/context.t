@@ -954,10 +954,14 @@ terra ui.Context:calculateFinalLayout()
     while rootIndex < self.layoutElementTreeRoots.length do
         var root = self.layoutElementTreeRoots:get(rootIndex)
         
-        if root ~= nil then
+        if root == nil then
+            rootIndex = rootIndex + 1
+        else
             var rootElement = self.layoutElements:get(root.layoutElementIndex)
             
-            if rootElement ~= nil and rootElement.layoutConfig ~= nil then
+            if rootElement == nil or rootElement.layoutConfig == nil then
+                rootIndex = rootIndex + 1
+            else
                 dfsBuffer.length = 0
                 
                 var rootNode: layout.LayoutElementTreeNode
@@ -967,6 +971,8 @@ terra ui.Context:calculateFinalLayout()
                 rootNode.nextChildOffset.x = [float](rootElement.layoutConfig.padding.left)
                 rootNode.nextChildOffset.y = [float](rootElement.layoutConfig.padding.top)
                 dfsBuffer:add(rootNode)
+                
+                self.layoutElementClipElementIds:set(0, 0)
                 
                 while dfsBuffer.length > 0 do
                     var currentIdx = dfsBuffer.length - 1
@@ -981,158 +987,93 @@ terra ui.Context:calculateFinalLayout()
                             dfsBuffer.length = dfsBuffer.length - 1
                         else
                             var layoutCfg = currentElement.layoutConfig
+                            var visited = self.layoutElementClipElementIds:getValue(currentIdx) ~= 0
                             
-                            if not ui.ElementHasConfig(currentElement, config.CONFIG_TEXT) then
-                                var childCount = currentElement.childrenOrTextContent.children.length
-                                if childCount > 0 then
-                                    var contentSize: config.Dimensions
-                                    contentSize.width = 0
-                                    contentSize.height = 0
-                                    
-                                    if layoutCfg.layoutDirection == config.LEFT_TO_RIGHT then
-                                        var i: int32 = 0
-                                        while i < childCount do
-                                            var childIdx = currentElement.childrenOrTextContent.children.elements[i]
-                                            var childElement = self.layoutElements:get(childIdx)
-                                            if childElement ~= nil then
-                                                contentSize.width = contentSize.width + childElement.dimensions.width
-                                                if childElement.dimensions.height > contentSize.height then
-                                                    contentSize.height = childElement.dimensions.height
-                                                end
-                                            end
-                                            i = i + 1
-                                        end
-                                        contentSize.width = contentSize.width + [float]([int32](childCount - 1) * layoutCfg.childGap)
-                                    else
-                                        var i: int32 = 0
-                                        while i < childCount do
-                                            var childIdx = currentElement.childrenOrTextContent.children.elements[i]
-                                            var childElement = self.layoutElements:get(childIdx)
-                                            if childElement ~= nil then
-                                                if childElement.dimensions.width > contentSize.width then
-                                                    contentSize.width = childElement.dimensions.width
-                                                end
-                                                contentSize.height = contentSize.height + childElement.dimensions.height
-                                            end
-                                            i = i + 1
-                                        end
-                                        contentSize.height = contentSize.height + [float]([int32](childCount - 1) * layoutCfg.childGap)
-                                    end
-                                    
-                                    var paddingH: float = [float](layoutCfg.padding.left + layoutCfg.padding.right)
-                                    var paddingV: float = [float](layoutCfg.padding.top + layoutCfg.padding.bottom)
-                                    
-                                    if layoutCfg.layoutDirection == config.LEFT_TO_RIGHT then
-                                        var extraSpace: float = currentElement.dimensions.width - paddingH - contentSize.width
-                                        if extraSpace < 0 then extraSpace = 0 end
-                                        if layoutCfg.childAlignment.x == config.ALIGN_X_CENTER then
-                                            currentElementTreeNode.nextChildOffset.x = currentElementTreeNode.nextChildOffset.x + extraSpace / 2.0
-                                        elseif layoutCfg.childAlignment.x == config.ALIGN_X_RIGHT then
-                                            currentElementTreeNode.nextChildOffset.x = currentElementTreeNode.nextChildOffset.x + extraSpace
-                                        end
-                                    else
-                                        var extraSpace: float = currentElement.dimensions.height - paddingV - contentSize.height
-                                        if extraSpace < 0 then extraSpace = 0 end
-                                        if layoutCfg.childAlignment.y == config.ALIGN_Y_CENTER then
-                                            currentElementTreeNode.nextChildOffset.y = currentElementTreeNode.nextChildOffset.y + extraSpace / 2.0
-                                        elseif layoutCfg.childAlignment.y == config.ALIGN_Y_BOTTOM then
-                                            currentElementTreeNode.nextChildOffset.y = currentElementTreeNode.nextChildOffset.y + extraSpace
-                                        end
-                                    end
-                                end
-                            end
-                            
-                            var addedChildren = false
-                            if not ui.ElementHasConfig(currentElement, config.CONFIG_TEXT) then
-                                var childCount = currentElement.childrenOrTextContent.children.length
-                                if childCount > 0 then
-                                    dfsBuffer.length = dfsBuffer.length + childCount
-                                    
-                                    var i: int32 = 0
-                                    while i < childCount do
-                                        var childIdx = currentElement.childrenOrTextContent.children.elements[i]
-                                        var childElement = self.layoutElements:get(childIdx)
-                                        if childElement ~= nil and childElement.layoutConfig ~= nil then
-                                            var childNode: layout.LayoutElementTreeNode
-                                            childNode.layoutElement = childElement
-                                            
-                                            var scrollOffsetX: float = 0
-                                            var scrollOffsetY: float = 0
-                                            
-                                            if layoutCfg.layoutDirection == config.LEFT_TO_RIGHT then
-                                                var whiteSpaceAroundChild: float = currentElement.dimensions.height - 
-                                                    [float](layoutCfg.padding.top + layoutCfg.padding.bottom) - 
-                                                    childElement.dimensions.height
-                                                
-                                                childNode.nextChildOffset.y = [float](childElement.layoutConfig.padding.top)
-                                                
-                                                if layoutCfg.childAlignment.y == config.ALIGN_Y_CENTER then
-                                                    childNode.nextChildOffset.y = childNode.nextChildOffset.y + whiteSpaceAroundChild / 2.0
-                                                elseif layoutCfg.childAlignment.y == config.ALIGN_Y_BOTTOM then
-                                                    childNode.nextChildOffset.y = childNode.nextChildOffset.y + whiteSpaceAroundChild
-                                                end
-                                            else
-                                                var whiteSpaceAroundChild: float = currentElement.dimensions.width - 
-                                                    [float](layoutCfg.padding.left + layoutCfg.padding.right) - 
-                                                    childElement.dimensions.width
-                                                
-                                                childNode.nextChildOffset.x = [float](childElement.layoutConfig.padding.left)
-                                                
-                                                if layoutCfg.childAlignment.x == config.ALIGN_X_CENTER then
-                                                    childNode.nextChildOffset.x = childNode.nextChildOffset.x + whiteSpaceAroundChild / 2.0
-                                                elseif layoutCfg.childAlignment.x == config.ALIGN_X_RIGHT then
-                                                    childNode.nextChildOffset.x = childNode.nextChildOffset.x + whiteSpaceAroundChild
-                                                end
-                                            end
-                                            
-                                            childNode.position.x = currentElementTreeNode.position.x + 
-                                                currentElementTreeNode.nextChildOffset.x + scrollOffsetX
-                                            childNode.position.y = currentElementTreeNode.position.y + 
-                                                currentElementTreeNode.nextChildOffset.y + scrollOffsetY
-                                            
-                                            var newNodeIndex = dfsBuffer.length - 1 - i
-                                            dfsBuffer:set(newNodeIndex, childNode)
-                                            
-                                            if layoutCfg.layoutDirection == config.LEFT_TO_RIGHT then
-                                                currentElementTreeNode.nextChildOffset.x = currentElementTreeNode.nextChildOffset.x + 
-                                                    childElement.dimensions.width + [float](layoutCfg.childGap)
-                                            else
-                                                currentElementTreeNode.nextChildOffset.y = currentElementTreeNode.nextChildOffset.y + 
-                                                    childElement.dimensions.height + [float](layoutCfg.childGap)
-                                            end
-                                        end
-                                        i = i + 1
-                                    end
-                                    addedChildren = true
-                                end
-                            end
-                            
-                            if addedChildren then
-                                -- Remove the current parent node after pushing children.
-                                -- Otherwise the same node is revisited forever.
-                                var topNode = dfsBuffer:get(dfsBuffer.length - 1)
-                                if topNode ~= nil then
-                                    dfsBuffer:set(currentIdx, @topNode)
-                                end
-                                dfsBuffer.length = dfsBuffer.length - 1
-                            end
-                            
-                            if not addedChildren then
+                            if not visited then
+                                self.layoutElementClipElementIds:set(currentIdx, 1)
+                                
                                 var boundingBox: config.BoundingBox
                                 boundingBox.x = currentElementTreeNode.position.x
                                 boundingBox.y = currentElementTreeNode.position.y
                                 boundingBox.width = currentElement.dimensions.width
                                 boundingBox.height = currentElement.dimensions.height
                                 
-                                if not ui.ElementIsOffscreen(self, &boundingBox) then
-                                    var sharedCfgResult = ui.FindElementConfigWithType(currentElement, config.CONFIG_SHARED)
-                                    var emitRectangle = false
-                                    
-                                    if sharedCfgResult ~= nil then
-                                        var sharedCfg = sharedCfgResult.config.sharedConfig
-                                        if sharedCfg ~= nil and sharedCfg.backgroundColor.a > 0 then
-                                            emitRectangle = true
+                                var sharedCfgResult = ui.FindElementConfigWithType(currentElement, config.CONFIG_SHARED)
+                                var emitRectangle = false
+                                
+                                if sharedCfgResult ~= nil then
+                                    var sharedCfg = sharedCfgResult.config.sharedConfig
+                                    if sharedCfg ~= nil and sharedCfg.backgroundColor.a > 0 then
+                                        emitRectangle = true
+                                    end
+                                end
+                                
+                                var offscreen = ui.ElementIsOffscreen(self, &boundingBox)
+                                
+                                if not offscreen then
+                                    var cfgIdx: int32 = 0
+                                    while cfgIdx < currentElement.elementConfigs.length do
+                                        if currentElement.elementConfigs.internalArray ~= nil then
+                                            var elemCfg = &currentElement.elementConfigs.internalArray[cfgIdx]
+                                            
+                                            if elemCfg.configType == config.CONFIG_CLIP then
+                                                var cmd: config.RenderCommand
+                                                cmd.boundingBox = boundingBox
+                                                cmd.id = currentElement.id
+                                                cmd.commandType = config.RENDER_SCISSOR_START
+                                                cmd.zIndex = root.zIndex
+                                                
+                                                if elemCfg.config.clipConfig ~= nil then
+                                                    cmd.renderData.clip.horizontal = elemCfg.config.clipConfig.horizontal
+                                                    cmd.renderData.clip.vertical = elemCfg.config.clipConfig.vertical
+                                                end
+                                                
+                                                if self.renderCommands.length < self.renderCommands.capacity then
+                                                    self.renderCommands:add(cmd)
+                                                end
+                                                
+                                            elseif elemCfg.configType == config.CONFIG_IMAGE then
+                                                var cmd: config.RenderCommand
+                                                cmd.boundingBox = boundingBox
+                                                cmd.id = currentElement.id
+                                                cmd.commandType = config.RENDER_IMAGE
+                                                cmd.zIndex = root.zIndex
+                                                
+                                                if elemCfg.config.imageConfig ~= nil then
+                                                    cmd.renderData.image.imageData = elemCfg.config.imageConfig.imageData
+                                                end
+                                                if sharedCfgResult ~= nil and sharedCfgResult.config.sharedConfig ~= nil then
+                                                    cmd.renderData.image.backgroundColor = sharedCfgResult.config.sharedConfig.backgroundColor
+                                                    cmd.renderData.image.cornerRadius = sharedCfgResult.config.sharedConfig.cornerRadius
+                                                end
+                                                
+                                                if self.renderCommands.length < self.renderCommands.capacity then
+                                                    self.renderCommands:add(cmd)
+                                                end
+                                                emitRectangle = false
+                                                
+                                            elseif elemCfg.configType == config.CONFIG_CUSTOM then
+                                                var cmd: config.RenderCommand
+                                                cmd.boundingBox = boundingBox
+                                                cmd.id = currentElement.id
+                                                cmd.commandType = config.RENDER_CUSTOM
+                                                cmd.zIndex = root.zIndex
+                                                
+                                                if elemCfg.config.customConfig ~= nil then
+                                                    cmd.renderData.custom.customData = elemCfg.config.customConfig.customData
+                                                end
+                                                if sharedCfgResult ~= nil and sharedCfgResult.config.sharedConfig ~= nil then
+                                                    cmd.renderData.custom.backgroundColor = sharedCfgResult.config.sharedConfig.backgroundColor
+                                                    cmd.renderData.custom.cornerRadius = sharedCfgResult.config.sharedConfig.cornerRadius
+                                                end
+                                                
+                                                if self.renderCommands.length < self.renderCommands.capacity then
+                                                    self.renderCommands:add(cmd)
+                                                end
+                                                emitRectangle = false
+                                            end
                                         end
+                                        cfgIdx = cfgIdx + 1
                                     end
                                     
                                     if emitRectangle then
@@ -1140,15 +1081,154 @@ terra ui.Context:calculateFinalLayout()
                                         cmd.boundingBox = boundingBox
                                         cmd.id = currentElement.id
                                         cmd.commandType = config.RENDER_RECTANGLE
+                                        cmd.zIndex = root.zIndex
                                         
                                         if sharedCfgResult ~= nil and sharedCfgResult.config.sharedConfig ~= nil then
                                             cmd.renderData.rectangle.backgroundColor = sharedCfgResult.config.sharedConfig.backgroundColor
                                             cmd.renderData.rectangle.cornerRadius = sharedCfgResult.config.sharedConfig.cornerRadius
+                                            cmd.userData = sharedCfgResult.config.sharedConfig.userData
                                         end
                                         
                                         if self.renderCommands.length < self.renderCommands.capacity then
                                             self.renderCommands:add(cmd)
                                         end
+                                    end
+                                end
+                                
+                                if not ui.ElementHasConfig(currentElement, config.CONFIG_TEXT) then
+                                    var childCount = currentElement.childrenOrTextContent.children.length
+                                    if childCount > 0 then
+                                        var contentSize: config.Dimensions
+                                        contentSize.width = 0
+                                        contentSize.height = 0
+                                        
+                                        if layoutCfg.layoutDirection == config.LEFT_TO_RIGHT then
+                                            var i: int32 = 0
+                                            while i < childCount do
+                                                var childIdx = currentElement.childrenOrTextContent.children.elements[i]
+                                                var childElement = self.layoutElements:get(childIdx)
+                                                if childElement ~= nil then
+                                                    contentSize.width = contentSize.width + childElement.dimensions.width
+                                                    if childElement.dimensions.height > contentSize.height then
+                                                        contentSize.height = childElement.dimensions.height
+                                                    end
+                                                end
+                                                i = i + 1
+                                            end
+                                            contentSize.width = contentSize.width + [float]([int32](childCount - 1) * layoutCfg.childGap)
+                                        else
+                                            var i: int32 = 0
+                                            while i < childCount do
+                                                var childIdx = currentElement.childrenOrTextContent.children.elements[i]
+                                                var childElement = self.layoutElements:get(childIdx)
+                                                if childElement ~= nil then
+                                                    if childElement.dimensions.width > contentSize.width then
+                                                        contentSize.width = childElement.dimensions.width
+                                                    end
+                                                    contentSize.height = contentSize.height + childElement.dimensions.height
+                                                end
+                                                i = i + 1
+                                            end
+                                            contentSize.height = contentSize.height + [float]([int32](childCount - 1) * layoutCfg.childGap)
+                                        end
+                                        
+                                        var paddingH: float = [float](layoutCfg.padding.left + layoutCfg.padding.right)
+                                        var paddingV: float = [float](layoutCfg.padding.top + layoutCfg.padding.bottom)
+                                        
+                                        if layoutCfg.layoutDirection == config.LEFT_TO_RIGHT then
+                                            var extraSpace: float = currentElement.dimensions.width - paddingH - contentSize.width
+                                            if extraSpace < 0 then extraSpace = 0 end
+                                            if layoutCfg.childAlignment.x == config.ALIGN_X_CENTER then
+                                                currentElementTreeNode.nextChildOffset.x = currentElementTreeNode.nextChildOffset.x + extraSpace / 2.0
+                                            elseif layoutCfg.childAlignment.x == config.ALIGN_X_RIGHT then
+                                                currentElementTreeNode.nextChildOffset.x = currentElementTreeNode.nextChildOffset.x + extraSpace
+                                            end
+                                        else
+                                            var extraSpace: float = currentElement.dimensions.height - paddingV - contentSize.height
+                                            if extraSpace < 0 then extraSpace = 0 end
+                                            if layoutCfg.childAlignment.y == config.ALIGN_Y_CENTER then
+                                                currentElementTreeNode.nextChildOffset.y = currentElementTreeNode.nextChildOffset.y + extraSpace / 2.0
+                                            elseif layoutCfg.childAlignment.y == config.ALIGN_Y_BOTTOM then
+                                                currentElementTreeNode.nextChildOffset.y = currentElementTreeNode.nextChildOffset.y + extraSpace
+                                            end
+                                        end
+                                    end
+                                end
+                                
+                                if not ui.ElementHasConfig(currentElement, config.CONFIG_TEXT) then
+                                    var childCount = currentElement.childrenOrTextContent.children.length
+                                    if childCount > 0 then
+                                        dfsBuffer.length = dfsBuffer.length + childCount
+                                        
+                                        var i: int32 = 0
+                                        while i < childCount do
+                                            var childIdx = currentElement.childrenOrTextContent.children.elements[i]
+                                            var childElement = self.layoutElements:get(childIdx)
+                                            if childElement ~= nil and childElement.layoutConfig ~= nil then
+                                                var childNode: layout.LayoutElementTreeNode
+                                                childNode.layoutElement = childElement
+                                                
+                                                var scrollOffsetX: float = 0
+                                                var scrollOffsetY: float = 0
+                                                
+                                                if layoutCfg.layoutDirection == config.LEFT_TO_RIGHT then
+                                                    var whiteSpaceAroundChild: float = currentElement.dimensions.height - 
+                                                        [float](layoutCfg.padding.top + layoutCfg.padding.bottom) - 
+                                                        childElement.dimensions.height
+                                                    
+                                                    childNode.nextChildOffset.y = [float](childElement.layoutConfig.padding.top)
+                                                    
+                                                    if layoutCfg.childAlignment.y == config.ALIGN_Y_CENTER then
+                                                        childNode.nextChildOffset.y = childNode.nextChildOffset.y + whiteSpaceAroundChild / 2.0
+                                                    elseif layoutCfg.childAlignment.y == config.ALIGN_Y_BOTTOM then
+                                                        childNode.nextChildOffset.y = childNode.nextChildOffset.y + whiteSpaceAroundChild
+                                                    end
+                                                else
+                                                    var whiteSpaceAroundChild: float = currentElement.dimensions.width - 
+                                                        [float](layoutCfg.padding.left + layoutCfg.padding.right) - 
+                                                        childElement.dimensions.width
+                                                    
+                                                    childNode.nextChildOffset.x = [float](childElement.layoutConfig.padding.left)
+                                                    
+                                                    if layoutCfg.childAlignment.x == config.ALIGN_X_CENTER then
+                                                        childNode.nextChildOffset.x = childNode.nextChildOffset.x + whiteSpaceAroundChild / 2.0
+                                                    elseif layoutCfg.childAlignment.x == config.ALIGN_X_RIGHT then
+                                                        childNode.nextChildOffset.x = childNode.nextChildOffset.x + whiteSpaceAroundChild
+                                                    end
+                                                end
+                                                
+                                                childNode.position.x = currentElementTreeNode.position.x + 
+                                                    currentElementTreeNode.nextChildOffset.x + scrollOffsetX
+                                                childNode.position.y = currentElementTreeNode.position.y + 
+                                                    currentElementTreeNode.nextChildOffset.y + scrollOffsetY
+                                                
+                                                var newNodeIndex = dfsBuffer.length - 1 - i
+                                                dfsBuffer:set(newNodeIndex, childNode)
+                                                self.layoutElementClipElementIds:set(newNodeIndex, 0)
+                                                
+                                                if layoutCfg.layoutDirection == config.LEFT_TO_RIGHT then
+                                                    currentElementTreeNode.nextChildOffset.x = currentElementTreeNode.nextChildOffset.x + 
+                                                        childElement.dimensions.width + [float](layoutCfg.childGap)
+                                                else
+                                                    currentElementTreeNode.nextChildOffset.y = currentElementTreeNode.nextChildOffset.y + 
+                                                        childElement.dimensions.height + [float](layoutCfg.childGap)
+                                                end
+                                            end
+                                            i = i + 1
+                                        end
+                                    else
+                                        dfsBuffer.length = dfsBuffer.length - 1
+                                    end
+                                else
+                                    dfsBuffer.length = dfsBuffer.length - 1
+                                end
+                            else
+                                if ui.ElementHasConfig(currentElement, config.CONFIG_CLIP) then
+                                    if self.renderCommands.length < self.renderCommands.capacity then
+                                        var cmd: config.RenderCommand
+                                        cmd.id = currentElement.id
+                                        cmd.commandType = config.RENDER_SCISSOR_END
+                                        self.renderCommands:add(cmd)
                                     end
                                 end
                                 
@@ -1158,8 +1238,8 @@ terra ui.Context:calculateFinalLayout()
                     end
                 end
             end
+            rootIndex = rootIndex + 1
         end
-        rootIndex = rootIndex + 1
     end
 end
 
