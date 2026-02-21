@@ -1,37 +1,40 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-This repository ports `ref/clay.h` into the Argile Terra-native `ui` library and maintains parity-focused tests and benchmarks.
-- `src/`: Terra implementation modules (`arena`, `array`, `config`, `layout`, `context`, `init`).
-- `tests/`: Terra test suites (`test_foundation.t`, `test_layout.t`).
-- `bench/`: LuaJIT benchmark runner and docs.
-- `tools/`: build scripts and benchmark backends (`build_argile.t`, `build_bench.sh`, `build_terra.t`, `terra_bench_api.t`, `clay_bench.c`, `ffi_gen.t`).
-- `docs/design.md`, `docs/ai-guide.md`, `docs/terra/*`: architectural and Terra-language references.
-- `ref/clay.h`: authoritative Clay behavior reference.
+Argile ports `ref/clay.h` into a Terra-native UI library with parity tests and LuaJIT benchmarks.
+- `src/`: runtime modules (`arena`, `array`, `config`, `layout`, `context`, `init`) and compile-time builder (`builder`).
+- `tests/`: foundation, layout, and builder coverage (`test_foundation.t`, `test_layout.t`, `test_builder.t`).
+- `bench/`: Clay-vs-Argile benchmark harness.
+- `demo/love/`: Love2D demo using `build/libargile.so` via LuaJIT FFI.
+- `tools/`: build scripts (`build_argile.t`, `build_bench.sh`, `build_terra.t`) and benchmark backends.
+- `docs/design.md`, `docs/ai-guide.md`, `docs/terra/*`: design and Terra references.
+- `ref/clay.h`: source-of-truth behavior reference.
 
 ## Build, Test, and Development Commands
-Use these commands as the default workflow:
-- `terra tests/test_foundation.t`: core type/array/hash/config/context checks.
-- `terra tests/test_layout.t`: layout pipeline, render commands, and advanced feature checks.
-- `./tools/build_argile.t`: compiles the Argile shared library (`build/libargile.so`) and generates `build/argile_api_ffi.lua`.
-- `make build`: runs `tools/build_argile.t`, ensuring `build/libargile.so` + `build/argile_api_ffi.lua` are regenerated.
-- `luajit bench/compare.lua quick|heavy|stress`: run Clay-vs-Argile benchmark suites and print final comparison table.
-- `rg "pattern" src tests tools`: fast codebase search.
+Default workflow:
+- `make build`: build `build/libargile.so` and regenerate `build/argile_api_ffi.lua`.
+- `make test`: run all Terra tests.
+- `make build-bench`: build Argile and Clay benchmark libraries.
+- `make bench`, `make bench-quick`, `make bench-stress`: run benchmark profiles.
+- `make love-demo`: run the Love2D demo.
+- `rg "pattern" src tests tools`: fast code search.
 
 ## Coding Style & Naming Conventions
 - Keep Terra API under `ui` namespace; do not leak `Clay_`/`CLAY__` into new Terra-facing APIs.
 - Preserve Clay behavior exactly when porting algorithms; adapt syntax only.
-- Prefer data-oriented flat arrays and arena allocation.
-- Use `while` loops for flow that would otherwise depend on `continue`.
-- Validate Terra semantics against `docs/terra/api.md` before introducing advanced metaprogramming or ABI changes.
+- Prefer data-oriented arrays and arena allocation.
+- Use `while` loops for control flow that would otherwise require `continue`.
+- Use `ui.capi` for stable C/FFI exports; keep internal helpers on full `ui` only.
+- Validate Terra semantics with `docs/terra/api.md` before ABI or metaprogramming changes.
 
 ## Testing & Benchmarking Guidelines
 - Add regression tests for every layout/math/hash bug fix.
-- When adding benchmark scenarios, implement the same scenario in both backends:
-  - Terra: `tools/terra_bench_api.t`
+- Keep benchmark scenarios equivalent in both backends:
+  - Argile: `tools/terra_bench_api.t`
   - Clay: `tools/clay_bench.c`
 - Keep exported benchmark function signatures identical across both libraries.
 - Treat benchmark checksums as backend-internal consistency checks; compare performance metrics in the final table.
+- For FFI-facing changes, rebuild (`make build`) and sanity-check generated signatures in `build/argile_api_ffi.lua`.
 
 ## Commit & PR Guidelines
 - Commit format: `type(scope): imperative summary`.
