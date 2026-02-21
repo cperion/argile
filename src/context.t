@@ -66,6 +66,13 @@ ui.Context = struct {
 local ContextPtr = &ui.Context
 ui.currentContextPtr = global(ContextPtr, nil)
 
+local MeasureTextFnType = { string_mod.StringSlice, &config.TextConfig, &opaque } -> config.Dimensions
+local QueryScrollOffsetFnType = { uint32, &opaque } -> config.Vector2
+ui.measureTextFunction = global(MeasureTextFnType, nil)
+ui.measureTextUserData = global(&opaque, nil)
+ui.queryScrollOffsetFunction = global(QueryScrollOffsetFnType, nil)
+ui.queryScrollOffsetUserData = global(&opaque, nil)
+
 terra ui.GetCurrentContext() : &ui.Context
     return ui.currentContextPtr
 end
@@ -146,8 +153,16 @@ terra ui.Context:resetEphemeral()
     self.layoutElementTreeRoots:clear()
     self.layoutElementTreeNodeArray1:clear()
     self.wrappedTextLines:clear()
-    self.scrollContainerDatas:clear()
     self.layoutElementIdStrings:clear()
+
+    var i: int32 = 0
+    while i < self.scrollContainerDatas.length do
+        var scrollData = self.scrollContainerDatas:get(i)
+        if scrollData ~= nil then
+            scrollData.openThisFrame = false
+        end
+        i = i + 1
+    end
     
     self.layoutConfigs:clear()
     self.elementConfigs:clear()
@@ -411,15 +426,61 @@ terra ui.Context:closeElement()
         openElem.dimensions.height = 0
     end
     
+    var floatingCfgResult: &config.ElementConfig = nil
+    var cfgSearchIdx: int32 = 0
+    while cfgSearchIdx < openElem.elementConfigs.length do
+        if openElem.elementConfigs.internalArray ~= nil then
+            var cfg = &openElem.elementConfigs.internalArray[cfgSearchIdx]
+            if cfg.configType == config.CONFIG_FLOATING then
+                floatingCfgResult = cfg
+                break
+            end
+        end
+        cfgSearchIdx = cfgSearchIdx + 1
+    end
+    var isFloating = false
+    var floatingParentId: uint32 = 0
+    var floatingZIndex: int16 = 0
+    var floatingClipElementId: uint32 = 0
+    if floatingCfgResult ~= nil and floatingCfgResult.config.floatingConfig ~= nil then
+        var floatingCfg = floatingCfgResult.config.floatingConfig
+        if floatingCfg.attachTo ~= config.ATTACH_NONE then
+            isFloating = true
+            floatingParentId = floatingCfg.parentId
+            floatingZIndex = floatingCfg.zIndex
+            if floatingCfg.clipTo == config.CLIP_ATTACHED_PARENT then
+                floatingClipElementId = [uint32](self.layoutElementClipElementIds:getValue(self.layoutElements.length - 1))
+            end
+        end
+    end
+
     var closingIdx = self.openLayoutElementStack:getValue(self.openLayoutElementStack.length - 1)
     self.openLayoutElementStack.length = self.openLayoutElementStack.length - 1
     
     if self.openLayoutElementStack.length > 0 then
         var parent = self:getOpenLayoutElement()
         if parent ~= nil then
-            parent.childrenOrTextContent.children.length = parent.childrenOrTextContent.children.length + 1
-            self.layoutElementChildrenBuffer:add(closingIdx)
+            if isFloating then
+                parent.floatingChildrenCount = parent.floatingChildrenCount + 1
+                if floatingParentId == 0 then
+                    floatingParentId = parent.id
+                end
+            else
+                parent.childrenOrTextContent.children.length = parent.childrenOrTextContent.children.length + 1
+                self.layoutElementChildrenBuffer:add(closingIdx)
+            end
         end
+    end
+
+    if isFloating then
+        var treeRoot: layout.LayoutElementTreeRoot
+        treeRoot.layoutElementIndex = closingIdx
+        treeRoot.parentId = floatingParentId
+        treeRoot.clipElementId = floatingClipElementId
+        treeRoot.zIndex = floatingZIndex
+        treeRoot.pointerOffset.x = 0
+        treeRoot.pointerOffset.y = 0
+        self.layoutElementTreeRoots:add(treeRoot)
     end
 end
 
@@ -491,6 +552,127 @@ terra ui.CloseElement()
     end
 end
 
+terra ui.Context:openTextElement(text: config.String, textConfig: &config.TextConfig)
+    if self.layoutElements.length >= self.layoutElements.capacity - 1 or self.maxElementsExceeded then
+        self.maxElementsExceeded = true
+        return
+    end
+    
+    var parentElement = self:getOpenLayoutElement()
+    if parentElement == nil then return end
+    
+    var elem : layout.LayoutElement
+    elem.id = hash.HashNumber(parentElement.childrenOrTextContent.children.length + parentElement.floatingChildrenCount, parentElement.id).id
+    elem.dimensions.width = 0
+    elem.dimensions.height = 0
+    elem.minDimensions.width = 0
+    elem.minDimensions.height = 0
+    elem.layoutConfig = nil
+    elem.elementConfigs.length = 0
+    elem.elementConfigs.internalArray = nil
+    elem.childrenOrTextContent.children.elements = nil
+    elem.childrenOrTextContent.children.length = 0
+    elem.childrenOrTextContent.textElementData = nil
+    elem.floatingChildrenCount = 0
+    
+    var added = self.layoutElements:add(elem)
+    var idx = self.layoutElements.length - 1
+    
+    self.layoutElementClipElementIds:set(idx, 0)
+    self.layoutElementChildrenBuffer:add(idx)
+    
+    var textData : layout.TextElementData
+    textData.text = text
+    textData.preferredDimensions.width = 0
+    textData.preferredDimensions.height = 0
+    textData.wrappedLines.internalArray = nil
+    textData.wrappedLines.length = 0
+    textData.elementIndex = idx
+    
+    var textDataPtr = self.textElementData:add(textData)
+    
+    if added ~= nil then
+        added.childrenOrTextContent.textElementData = textDataPtr
+        
+        if textConfig ~= nil then
+            if ui.measureTextFunction ~= nil then
+                var slice: string_mod.StringSlice
+                slice.length = text.length
+                slice.chars = text.chars
+                slice.baseChars = text.chars
+                textData.preferredDimensions = ui.measureTextFunction(slice, textConfig, ui.measureTextUserData)
+
+                var wrappedLine: layout.WrappedTextLine
+                wrappedLine.dimensions = textData.preferredDimensions
+                wrappedLine.line = text
+                var wrappedLinePtr = self.wrappedTextLines:add(wrappedLine)
+                if wrappedLinePtr ~= nil then
+                    textData.wrappedLines.internalArray = wrappedLinePtr
+                    textData.wrappedLines.length = 1
+                end
+            end
+            @textDataPtr = textData
+
+            var textDimensions: config.Dimensions
+            textDimensions.width = textData.preferredDimensions.width
+            if textConfig.lineHeight > 0 then
+                textDimensions.height = [float](textConfig.lineHeight)
+            else
+                textDimensions.height = textData.preferredDimensions.height
+            end
+            added.dimensions = textDimensions
+            added.minDimensions.width = textData.preferredDimensions.width
+            added.minDimensions.height = textDimensions.height
+            
+            added.elementConfigs.internalArray = &self.elementConfigs.internalArray[self.elementConfigs.length]
+            added.elementConfigs.length = 1
+            
+            var elemCfg : config.ElementConfig
+            elemCfg.configType = config.CONFIG_TEXT
+            elemCfg.config.textConfig = textConfig
+            self.elementConfigs:add(elemCfg)
+        end
+        
+        var defaultLayout : config.LayoutConfig
+        defaultLayout.sizing.width.type = config.SIZING_FIT
+        defaultLayout.sizing.width.size.min = 0
+        defaultLayout.sizing.width.size.max = ui.MAXFLOAT
+        defaultLayout.sizing.width.percent = 0
+        defaultLayout.sizing.height.type = config.SIZING_FIT
+        defaultLayout.sizing.height.size.min = 0
+        defaultLayout.sizing.height.size.max = ui.MAXFLOAT
+        defaultLayout.sizing.height.percent = 0
+        defaultLayout.padding.left = 0
+        defaultLayout.padding.right = 0
+        defaultLayout.padding.top = 0
+        defaultLayout.padding.bottom = 0
+        defaultLayout.childGap = 0
+        defaultLayout.childAlignment.x = config.ALIGN_X_LEFT
+        defaultLayout.childAlignment.y = config.ALIGN_Y_TOP
+        defaultLayout.layoutDirection = config.LEFT_TO_RIGHT
+        added.layoutConfig = self:storeLayoutConfig(defaultLayout)
+    end
+    
+    parentElement.childrenOrTextContent.children.length = parentElement.childrenOrTextContent.children.length + 1
+end
+
+terra ui.OpenTextElement(text: config.String, textConfig: &config.TextConfig)
+    var ctx = ui.GetCurrentContext()
+    if ctx ~= nil then
+        ctx:openTextElement(text, textConfig)
+    end
+end
+
+terra ui.SetMeasureTextFunction(measureTextFunction: MeasureTextFnType, userData: &opaque)
+    ui.measureTextFunction = measureTextFunction
+    ui.measureTextUserData = userData
+end
+
+terra ui.SetQueryScrollOffsetFunction(queryScrollOffsetFunction: QueryScrollOffsetFnType, userData: &opaque)
+    ui.queryScrollOffsetFunction = queryScrollOffsetFunction
+    ui.queryScrollOffsetUserData = userData
+end
+
 ui.EPSILON = 0.01
 
 terra ui.FloatEqual(a: float, b: float) : bool
@@ -506,26 +688,30 @@ end
 
 terra ui.ElementHasConfig(elem: &layout.LayoutElement, cfgType: uint8) : bool
     if elem == nil then return false end
-    for i = 0, elem.elementConfigs.length do
+    var i: int32 = 0
+    while i < elem.elementConfigs.length do
         if elem.elementConfigs.internalArray ~= nil then
             var cfg = &elem.elementConfigs.internalArray[i]
             if cfg.configType == cfgType then
                 return true
             end
         end
+        i = i + 1
     end
     return false
 end
 
 terra ui.FindElementConfigWithType(elem: &layout.LayoutElement, cfgType: uint8) : &config.ElementConfig
     if elem == nil then return nil end
-    for i = 0, elem.elementConfigs.length do
+    var i: int32 = 0
+    while i < elem.elementConfigs.length do
         if elem.elementConfigs.internalArray ~= nil then
             var cfg = &elem.elementConfigs.internalArray[i]
             if cfg.configType == cfgType then
                 return cfg
             end
         end
+        i = i + 1
     end
     return nil
 end
@@ -535,6 +721,125 @@ terra ui.ElementIsOffscreen(ctx: &ui.Context, box: &config.BoundingBox) : bool
            (box.y > ctx.layoutDimensions.height) or
            (box.x + box.width < 0) or
            (box.y + box.height < 0)
+end
+
+terra ui.GetAttachPosition(box: &config.BoundingBox, attach: uint8) : config.Vector2
+    var p: config.Vector2
+    if attach == config.ATTACH_LEFT_TOP then
+        p.x = box.x
+        p.y = box.y
+    elseif attach == config.ATTACH_LEFT_CENTER then
+        p.x = box.x
+        p.y = box.y + box.height / 2.0
+    elseif attach == config.ATTACH_LEFT_BOTTOM then
+        p.x = box.x
+        p.y = box.y + box.height
+    elseif attach == config.ATTACH_CENTER_TOP then
+        p.x = box.x + box.width / 2.0
+        p.y = box.y
+    elseif attach == config.ATTACH_CENTER_CENTER then
+        p.x = box.x + box.width / 2.0
+        p.y = box.y + box.height / 2.0
+    elseif attach == config.ATTACH_CENTER_BOTTOM then
+        p.x = box.x + box.width / 2.0
+        p.y = box.y + box.height
+    elseif attach == config.ATTACH_RIGHT_TOP then
+        p.x = box.x + box.width
+        p.y = box.y
+    elseif attach == config.ATTACH_RIGHT_CENTER then
+        p.x = box.x + box.width
+        p.y = box.y + box.height / 2.0
+    else
+        p.x = box.x + box.width
+        p.y = box.y + box.height
+    end
+    return p
+end
+
+terra ui.Context:findScrollContainerData(elementId: uint32) : &layout.ScrollContainerDataInternal
+    var i: int32 = 0
+    while i < self.scrollContainerDatas.length do
+        var data = self.scrollContainerDatas:get(i)
+        if data ~= nil and data.elementId == elementId then
+            return data
+        end
+        i = i + 1
+    end
+    return nil
+end
+
+terra ui.Context:computeContentSize(elem: &layout.LayoutElement, layoutCfg: &config.LayoutConfig) : config.Dimensions
+    var contentSize: config.Dimensions
+    contentSize.width = 0
+    contentSize.height = 0
+    if elem == nil or layoutCfg == nil then
+        return contentSize
+    end
+    var childCount = elem.childrenOrTextContent.children.length
+    if childCount <= 0 then
+        return contentSize
+    end
+    if layoutCfg.layoutDirection == config.LEFT_TO_RIGHT then
+        var i: int32 = 0
+        while i < childCount do
+            var childIdx = elem.childrenOrTextContent.children.elements[i]
+            var child = self.layoutElements:get(childIdx)
+            if child ~= nil then
+                contentSize.width = contentSize.width + child.dimensions.width
+                if child.dimensions.height > contentSize.height then
+                    contentSize.height = child.dimensions.height
+                end
+            end
+            i = i + 1
+        end
+        if childCount > 1 then
+            contentSize.width = contentSize.width + [float]([int32](childCount - 1) * layoutCfg.childGap)
+        end
+    else
+        var i: int32 = 0
+        while i < childCount do
+            var childIdx = elem.childrenOrTextContent.children.elements[i]
+            var child = self.layoutElements:get(childIdx)
+            if child ~= nil then
+                if child.dimensions.width > contentSize.width then
+                    contentSize.width = child.dimensions.width
+                end
+                contentSize.height = contentSize.height + child.dimensions.height
+            end
+            i = i + 1
+        end
+        if childCount > 1 then
+            contentSize.height = contentSize.height + [float]([int32](childCount - 1) * layoutCfg.childGap)
+        end
+    end
+    return contentSize
+end
+
+terra ui.Context:applyAspectRatios()
+    var i: int32 = 0
+    while i < self.layoutElements.length do
+        var elem = self.layoutElements:get(i)
+        if elem ~= nil then
+            var aspectCfgResult = ui.FindElementConfigWithType(elem, config.CONFIG_ASPECT)
+            if aspectCfgResult ~= nil and aspectCfgResult.config.aspectRatioConfig ~= nil then
+                var ratio = aspectCfgResult.config.aspectRatioConfig.aspectRatio
+                if ratio > ui.EPSILON and elem.layoutConfig ~= nil then
+                    var width = elem.dimensions.width
+                    var height = elem.dimensions.height
+                    if width > ui.EPSILON and elem.layoutConfig.sizing.height.type ~= config.SIZING_FIXED then
+                        height = width / ratio
+                    elseif height > ui.EPSILON and elem.layoutConfig.sizing.width.type ~= config.SIZING_FIXED then
+                        width = height * ratio
+                    end
+                    elem.dimensions.width = width
+                    elem.dimensions.height = height
+                    elem.minDimensions.width = width
+                    elem.minDimensions.height = height
+                end
+            end
+        end
+        i = i + 1
+    end
 end
 
 terra ui.Context:sizeContainersAlongAxis(xAxis: bool)
@@ -943,7 +1248,27 @@ end
 
 terra ui.Context:calculateFinalLayout()
     self:sizeContainersAlongAxis(true)
+    self:applyAspectRatios()
     self:sizeContainersAlongAxis(false)
+    self:applyAspectRatios()
+    
+    var sortMax: int32 = self.layoutElementTreeRoots.length - 1
+    while sortMax > 0 do
+        var i: int32 = 0
+        while i < sortMax do
+            var current = self.layoutElementTreeRoots:get(i)
+            var next = self.layoutElementTreeRoots:get(i + 1)
+            if current ~= nil and next ~= nil then
+                if next.zIndex < current.zIndex then
+                    var temp: layout.LayoutElementTreeRoot = @current
+                    @current = @next
+                    @next = temp
+                end
+            end
+            i = i + 1
+        end
+        sortMax = sortMax - 1
+    end
     
     self.renderCommands.length = 0
     
@@ -964,10 +1289,48 @@ terra ui.Context:calculateFinalLayout()
             else
                 dfsBuffer.length = 0
                 
+                var rootStartX: float = 0
+                var rootStartY: float = 0
+                var floatingCfgResult = ui.FindElementConfigWithType(rootElement, config.CONFIG_FLOATING)
+                if floatingCfgResult ~= nil and floatingCfgResult.config.floatingConfig ~= nil then
+                    var floatingCfg = floatingCfgResult.config.floatingConfig
+                    if floatingCfg.attachTo ~= config.ATTACH_NONE then
+                        var parentBox: config.BoundingBox
+                        parentBox.x = 0
+                        parentBox.y = 0
+                        parentBox.width = self.layoutDimensions.width
+                        parentBox.height = self.layoutDimensions.height
+                        if floatingCfg.attachTo == config.ATTACH_PARENT or floatingCfg.attachTo == config.ATTACH_ELEMENT_WITH_ID then
+                            var parentId = root.parentId
+                            if floatingCfg.attachTo == config.ATTACH_ELEMENT_WITH_ID and floatingCfg.parentId ~= 0 then
+                                parentId = floatingCfg.parentId
+                            end
+                            var j: int32 = self.renderCommands.length - 1
+                            while j >= 0 do
+                                var cmd = self.renderCommands:get(j)
+                                if cmd ~= nil and cmd.id == parentId then
+                                    parentBox = cmd.boundingBox
+                                    break
+                                end
+                                j = j - 1
+                            end
+                        end
+                        var elementBox: config.BoundingBox
+                        elementBox.x = 0
+                        elementBox.y = 0
+                        elementBox.width = rootElement.dimensions.width
+                        elementBox.height = rootElement.dimensions.height
+                        var parentAttach = ui.GetAttachPosition(&parentBox, floatingCfg.attachPoints.parent)
+                        var elementAttach = ui.GetAttachPosition(&elementBox, floatingCfg.attachPoints.element)
+                        rootStartX = parentAttach.x - elementAttach.x + floatingCfg.offset.x
+                        rootStartY = parentAttach.y - elementAttach.y + floatingCfg.offset.y
+                    end
+                end
+
                 var rootNode: layout.LayoutElementTreeNode
                 rootNode.layoutElement = rootElement
-                rootNode.position.x = 0
-                rootNode.position.y = 0
+                rootNode.position.x = rootStartX
+                rootNode.position.y = rootStartY
                 rootNode.nextChildOffset.x = [float](rootElement.layoutConfig.padding.left)
                 rootNode.nextChildOffset.y = [float](rootElement.layoutConfig.padding.top)
                 dfsBuffer:add(rootNode)
@@ -1011,6 +1374,41 @@ terra ui.Context:calculateFinalLayout()
                                 var offscreen = ui.ElementIsOffscreen(self, &boundingBox)
                                 
                                 if not offscreen then
+                                    var clipCfgResultForScroll = ui.FindElementConfigWithType(currentElement, config.CONFIG_CLIP)
+                                    if clipCfgResultForScroll ~= nil and clipCfgResultForScroll.config.clipConfig ~= nil then
+                                        var scrollData = self:findScrollContainerData(currentElement.id)
+                                        if scrollData == nil then
+                                            var newScroll: layout.ScrollContainerDataInternal
+                                            newScroll.layoutElement = currentElement
+                                            newScroll.boundingBox = boundingBox
+                                            newScroll.contentSize = self:computeContentSize(currentElement, layoutCfg)
+                                            newScroll.scrollOrigin.x = 0
+                                            newScroll.scrollOrigin.y = 0
+                                            newScroll.pointerOrigin.x = 0
+                                            newScroll.pointerOrigin.y = 0
+                                            newScroll.scrollMomentum.x = 0
+                                            newScroll.scrollMomentum.y = 0
+                                            newScroll.scrollPosition.x = clipCfgResultForScroll.config.clipConfig.childOffset.x
+                                            newScroll.scrollPosition.y = clipCfgResultForScroll.config.clipConfig.childOffset.y
+                                            newScroll.previousDelta.x = 0
+                                            newScroll.previousDelta.y = 0
+                                            newScroll.momentumTime = 0
+                                            newScroll.elementId = currentElement.id
+                                            newScroll.openThisFrame = true
+                                            newScroll.pointerScrollActive = false
+                                            scrollData = self.scrollContainerDatas:add(newScroll)
+                                        end
+                                        if scrollData ~= nil then
+                                            scrollData.layoutElement = currentElement
+                                            scrollData.boundingBox = boundingBox
+                                            scrollData.contentSize = self:computeContentSize(currentElement, layoutCfg)
+                                            scrollData.openThisFrame = true
+                                            if ui.queryScrollOffsetFunction ~= nil then
+                                                scrollData.scrollPosition = ui.queryScrollOffsetFunction(currentElement.id, ui.queryScrollOffsetUserData)
+                                            end
+                                        end
+                                    end
+
                                     var cfgIdx: int32 = 0
                                     while cfgIdx < currentElement.elementConfigs.length do
                                         if currentElement.elementConfigs.internalArray ~= nil then
@@ -1093,6 +1491,66 @@ terra ui.Context:calculateFinalLayout()
                                             self.renderCommands:add(cmd)
                                         end
                                     end
+                                    
+                                    if ui.ElementHasConfig(currentElement, config.CONFIG_TEXT) then
+                                        var textCfgResult = ui.FindElementConfigWithType(currentElement, config.CONFIG_TEXT)
+                                        if textCfgResult ~= nil and textCfgResult.config.textConfig ~= nil then
+                                            var textCfg = textCfgResult.config.textConfig
+                                            var textData = currentElement.childrenOrTextContent.textElementData
+                                            
+                                            if textData ~= nil then
+                                                var naturalLineHeight: float = textData.preferredDimensions.height
+                                                var finalLineHeight: float
+                                                if textCfg.lineHeight > 0 then
+                                                    finalLineHeight = [float](textCfg.lineHeight)
+                                                else
+                                                    finalLineHeight = naturalLineHeight
+                                                end
+                                                var lineHeightOffset: float = (finalLineHeight - naturalLineHeight) / 2.0
+                                                var yPosition: float = lineHeightOffset
+                                                
+                                                var lineIndex: int32 = 0
+                                                while lineIndex < textData.wrappedLines.length do
+                                                    var wrappedLine = &textData.wrappedLines.internalArray[lineIndex]
+                                                    if wrappedLine.line.length == 0 then
+                                                        yPosition = yPosition + finalLineHeight
+                                                    else
+                                                        var offset: float = boundingBox.width - wrappedLine.dimensions.width
+                                                        if textCfg.textAlignment == config.TEXT_ALIGN_LEFT then
+                                                            offset = 0
+                                                        elseif textCfg.textAlignment == config.TEXT_ALIGN_CENTER then
+                                                            offset = offset / 2.0
+                                                        end
+                                                        
+                                                        var textCmd: config.RenderCommand
+                                                        textCmd.boundingBox.x = boundingBox.x + offset
+                                                        textCmd.boundingBox.y = boundingBox.y + yPosition
+                                                        textCmd.boundingBox.width = wrappedLine.dimensions.width
+                                                        textCmd.boundingBox.height = wrappedLine.dimensions.height
+                                                        textCmd.renderData.text.stringContents.length = wrappedLine.line.length
+                                                        textCmd.renderData.text.stringContents.chars = wrappedLine.line.chars
+                                                        textCmd.renderData.text.stringContents.baseChars = textData.text.chars
+                                                        textCmd.renderData.text.textColor = textCfg.textColor
+                                                        textCmd.renderData.text.fontId = textCfg.fontId
+                                                        textCmd.renderData.text.fontSize = textCfg.fontSize
+                                                        textCmd.renderData.text.letterSpacing = textCfg.letterSpacing
+                                                        textCmd.renderData.text.lineHeight = textCfg.lineHeight
+                                                        textCmd.userData = textCfg.userData
+                                                        textCmd.id = hash.HashNumber(lineIndex, currentElement.id).id
+                                                        textCmd.zIndex = root.zIndex
+                                                        textCmd.commandType = config.RENDER_TEXT
+                                                        
+                                                        if self.renderCommands.length < self.renderCommands.capacity then
+                                                            self.renderCommands:add(textCmd)
+                                                        end
+                                                        
+                                                        yPosition = yPosition + finalLineHeight
+                                                    end
+                                                    lineIndex = lineIndex + 1
+                                                end
+                                            end
+                                        end
+                                    end
                                 end
                                 
                                 if not ui.ElementHasConfig(currentElement, config.CONFIG_TEXT) then
@@ -1170,6 +1628,17 @@ terra ui.Context:calculateFinalLayout()
                                                 
                                                 var scrollOffsetX: float = 0
                                                 var scrollOffsetY: float = 0
+                                                var clipCfgForChildOffset = ui.FindElementConfigWithType(currentElement, config.CONFIG_CLIP)
+                                                if clipCfgForChildOffset ~= nil and clipCfgForChildOffset.config.clipConfig ~= nil then
+                                                    var scrollData = self:findScrollContainerData(currentElement.id)
+                                                    if scrollData ~= nil then
+                                                        scrollOffsetX = scrollData.scrollPosition.x
+                                                        scrollOffsetY = scrollData.scrollPosition.y
+                                                    else
+                                                        scrollOffsetX = clipCfgForChildOffset.config.clipConfig.childOffset.x
+                                                        scrollOffsetY = clipCfgForChildOffset.config.clipConfig.childOffset.y
+                                                    end
+                                                end
                                                 
                                                 if layoutCfg.layoutDirection == config.LEFT_TO_RIGHT then
                                                     var whiteSpaceAroundChild: float = currentElement.dimensions.height - 
@@ -1216,19 +1685,119 @@ terra ui.Context:calculateFinalLayout()
                                             end
                                             i = i + 1
                                         end
-                                    else
-                                        dfsBuffer.length = dfsBuffer.length - 1
                                     end
-                                else
-                                    dfsBuffer.length = dfsBuffer.length - 1
                                 end
                             else
+                                var childCount = currentElement.childrenOrTextContent.children.length
+                                
                                 if ui.ElementHasConfig(currentElement, config.CONFIG_CLIP) then
                                     if self.renderCommands.length < self.renderCommands.capacity then
                                         var cmd: config.RenderCommand
                                         cmd.id = currentElement.id
                                         cmd.commandType = config.RENDER_SCISSOR_END
                                         self.renderCommands:add(cmd)
+                                    end
+                                end
+                                
+                                if ui.ElementHasConfig(currentElement, config.CONFIG_BORDER) then
+                                    var borderBoundingBox: config.BoundingBox
+                                    borderBoundingBox.x = currentElementTreeNode.position.x
+                                    borderBoundingBox.y = currentElementTreeNode.position.y
+                                    borderBoundingBox.width = currentElement.dimensions.width
+                                    borderBoundingBox.height = currentElement.dimensions.height
+                                    
+                                    if not ui.ElementIsOffscreen(self, &borderBoundingBox) then
+                                        var borderCfgResult = ui.FindElementConfigWithType(currentElement, config.CONFIG_BORDER)
+                                        if borderCfgResult ~= nil and borderCfgResult.config.borderConfig ~= nil then
+                                            var borderCfg = borderCfgResult.config.borderConfig
+                                            
+                                            if borderCfg.color.a > 0 then
+                                                var borderSharedCfgResult = ui.FindElementConfigWithType(currentElement, config.CONFIG_SHARED)
+                                                
+                                                var cmd: config.RenderCommand
+                                                cmd.boundingBox = borderBoundingBox
+                                                cmd.id = currentElement.id
+                                                cmd.commandType = config.RENDER_BORDER
+                                                cmd.zIndex = root.zIndex
+                                                cmd.renderData.border.color = borderCfg.color
+                                                cmd.renderData.border.width = borderCfg.width
+                                                
+                                                if borderSharedCfgResult ~= nil and borderSharedCfgResult.config.sharedConfig ~= nil then
+                                                    cmd.renderData.border.cornerRadius = borderSharedCfgResult.config.sharedConfig.cornerRadius
+                                                    cmd.userData = borderSharedCfgResult.config.sharedConfig.userData
+                                                end
+                                                
+                                                if self.renderCommands.length < self.renderCommands.capacity then
+                                                    self.renderCommands:add(cmd)
+                                                end
+                                                
+                                                if borderCfg.width.betweenChildren > 0 and layoutCfg ~= nil then
+                                                    var halfGap: float = [float](layoutCfg.childGap) / 2.0
+                                                    var borderOffsetX: float = [float](layoutCfg.padding.left) - halfGap
+                                                    var borderOffsetY: float = [float](layoutCfg.padding.top) - halfGap
+                                                    
+                                                    if layoutCfg.layoutDirection == config.LEFT_TO_RIGHT then
+                                                        var i: int32 = 0
+                                                        while i < childCount do
+                                                            if i > 0 then
+                                                                var childIdx = currentElement.childrenOrTextContent.children.elements[i]
+                                                                var childElement = self.layoutElements:get(childIdx)
+                                                                if childElement ~= nil then
+                                                                    var betweenCmd: config.RenderCommand
+                                                                    betweenCmd.boundingBox.x = borderBoundingBox.x + borderOffsetX
+                                                                    betweenCmd.boundingBox.y = borderBoundingBox.y
+                                                                    betweenCmd.boundingBox.width = [float](borderCfg.width.betweenChildren)
+                                                                    betweenCmd.boundingBox.height = currentElement.dimensions.height
+                                                                    betweenCmd.renderData.rectangle.backgroundColor = borderCfg.color
+                                                                    betweenCmd.id = hash.HashNumber(i, currentElement.id).id
+                                                                    betweenCmd.commandType = config.RENDER_RECTANGLE
+                                                                    betweenCmd.zIndex = root.zIndex
+                                                                    
+                                                                    if self.renderCommands.length < self.renderCommands.capacity then
+                                                                        self.renderCommands:add(betweenCmd)
+                                                                    end
+                                                                end
+                                                            end
+                                                            var childIdx = currentElement.childrenOrTextContent.children.elements[i]
+                                                            var childElement = self.layoutElements:get(childIdx)
+                                                            if childElement ~= nil then
+                                                                borderOffsetX = borderOffsetX + childElement.dimensions.width + [float](layoutCfg.childGap)
+                                                            end
+                                                            i = i + 1
+                                                        end
+                                                    else
+                                                        var i: int32 = 0
+                                                        while i < childCount do
+                                                            if i > 0 then
+                                                                var childIdx = currentElement.childrenOrTextContent.children.elements[i]
+                                                                var childElement = self.layoutElements:get(childIdx)
+                                                                if childElement ~= nil then
+                                                                    var betweenCmd: config.RenderCommand
+                                                                    betweenCmd.boundingBox.x = borderBoundingBox.x
+                                                                    betweenCmd.boundingBox.y = borderBoundingBox.y + borderOffsetY
+                                                                    betweenCmd.boundingBox.width = currentElement.dimensions.width
+                                                                    betweenCmd.boundingBox.height = [float](borderCfg.width.betweenChildren)
+                                                                    betweenCmd.renderData.rectangle.backgroundColor = borderCfg.color
+                                                                    betweenCmd.id = hash.HashNumber(i, currentElement.id).id
+                                                                    betweenCmd.commandType = config.RENDER_RECTANGLE
+                                                                    betweenCmd.zIndex = root.zIndex
+                                                                    
+                                                                    if self.renderCommands.length < self.renderCommands.capacity then
+                                                                        self.renderCommands:add(betweenCmd)
+                                                                    end
+                                                                end
+                                                            end
+                                                            var childIdx = currentElement.childrenOrTextContent.children.elements[i]
+                                                            var childElement = self.layoutElements:get(childIdx)
+                                                            if childElement ~= nil then
+                                                                borderOffsetY = borderOffsetY + childElement.dimensions.height + [float](layoutCfg.childGap)
+                                                            end
+                                                            i = i + 1
+                                                        end
+                                                    end
+                                                end
+                                            end
+                                        end
                                     end
                                 end
                                 
@@ -1241,6 +1810,181 @@ terra ui.Context:calculateFinalLayout()
             rootIndex = rootIndex + 1
         end
     end
+end
+
+terra ui.PointInsideBox(point: config.Vector2, box: config.BoundingBox) : bool
+    return point.x >= box.x and point.x <= box.x + box.width and point.y >= box.y and point.y <= box.y + box.height
+end
+
+terra ui.SetPointerState(position: config.Vector2, pointerDown: bool)
+    var ctx = ui.GetCurrentContext()
+    if ctx == nil then return end
+    ctx.pointerInfo.position = position
+    if pointerDown then
+        if ctx.pointerInfo.state == config.POINTER_PRESSED_THIS_FRAME then
+            ctx.pointerInfo.state = config.POINTER_PRESSED
+        elseif ctx.pointerInfo.state ~= config.POINTER_PRESSED then
+            ctx.pointerInfo.state = config.POINTER_PRESSED_THIS_FRAME
+        end
+    else
+        if ctx.pointerInfo.state == config.POINTER_RELEASED_THIS_FRAME then
+            ctx.pointerInfo.state = config.POINTER_RELEASED
+        elseif ctx.pointerInfo.state ~= config.POINTER_RELEASED then
+            ctx.pointerInfo.state = config.POINTER_RELEASED_THIS_FRAME
+        end
+    end
+end
+
+terra ui.UpdateScrollContainers(enableDragScrolling: bool, scrollDelta: config.Vector2, deltaTime: float)
+    var ctx = ui.GetCurrentContext()
+    if ctx == nil then return end
+    var isPointerActive = enableDragScrolling and (ctx.pointerInfo.state == config.POINTER_PRESSED or ctx.pointerInfo.state == config.POINTER_PRESSED_THIS_FRAME)
+
+    var highestPriorityScrollData: &layout.ScrollContainerDataInternal = nil
+    var i: int32 = 0
+    while i < ctx.scrollContainerDatas.length do
+        var scrollData = ctx.scrollContainerDatas:get(i)
+        if scrollData == nil or not scrollData.openThisFrame then
+            ctx.scrollContainerDatas:removeSwapback(i)
+            i = i - 1
+        elseif scrollData.layoutElement ~= nil then
+            var clipCfgResult = ui.FindElementConfigWithType(scrollData.layoutElement, config.CONFIG_CLIP)
+            if clipCfgResult ~= nil and clipCfgResult.config.clipConfig ~= nil then
+                var clipCfg = clipCfgResult.config.clipConfig
+                var canScrollVertically = clipCfg.vertical and scrollData.contentSize.height > scrollData.layoutElement.dimensions.height
+                var canScrollHorizontally = clipCfg.horizontal and scrollData.contentSize.width > scrollData.layoutElement.dimensions.width
+
+                if not isPointerActive and scrollData.pointerScrollActive then
+                    if scrollData.momentumTime > ui.EPSILON then
+                        scrollData.scrollMomentum.x = (scrollData.scrollPosition.x - scrollData.scrollOrigin.x) / (scrollData.momentumTime * 25.0)
+                        scrollData.scrollMomentum.y = (scrollData.scrollPosition.y - scrollData.scrollOrigin.y) / (scrollData.momentumTime * 25.0)
+                    end
+                    scrollData.pointerScrollActive = false
+                    scrollData.pointerOrigin.x = 0
+                    scrollData.pointerOrigin.y = 0
+                    scrollData.momentumTime = 0
+                end
+
+                if not scrollData.pointerScrollActive then
+                    scrollData.scrollPosition.x = scrollData.scrollPosition.x + scrollData.scrollMomentum.x
+                    scrollData.scrollPosition.y = scrollData.scrollPosition.y + scrollData.scrollMomentum.y
+                    scrollData.scrollMomentum.x = scrollData.scrollMomentum.x * (1.0 - deltaTime * 8.0)
+                    scrollData.scrollMomentum.y = scrollData.scrollMomentum.y * (1.0 - deltaTime * 8.0)
+                    if scrollData.scrollMomentum.x > -0.1 and scrollData.scrollMomentum.x < 0.1 then
+                        scrollData.scrollMomentum.x = 0
+                    end
+                    if scrollData.scrollMomentum.y > -0.1 and scrollData.scrollMomentum.y < 0.1 then
+                        scrollData.scrollMomentum.y = 0
+                    end
+                end
+
+                if ui.PointInsideBox(ctx.pointerInfo.position, scrollData.boundingBox) then
+                    highestPriorityScrollData = scrollData
+                end
+
+                if canScrollVertically then
+                    var minY = -(scrollData.contentSize.height - scrollData.layoutElement.dimensions.height)
+                    scrollData.scrollPosition.y = ui.clamp(scrollData.scrollPosition.y, minY, 0)
+                end
+                if canScrollHorizontally then
+                    var minX = -(scrollData.contentSize.width - scrollData.layoutElement.dimensions.width)
+                    scrollData.scrollPosition.x = ui.clamp(scrollData.scrollPosition.x, minX, 0)
+                end
+            end
+        end
+        i = i + 1
+    end
+
+    if highestPriorityScrollData ~= nil and highestPriorityScrollData.layoutElement ~= nil then
+        var clipCfgResult = ui.FindElementConfigWithType(highestPriorityScrollData.layoutElement, config.CONFIG_CLIP)
+        if clipCfgResult ~= nil and clipCfgResult.config.clipConfig ~= nil then
+            var clipCfg = clipCfgResult.config.clipConfig
+            var canScrollVertically = clipCfg.vertical and highestPriorityScrollData.contentSize.height > highestPriorityScrollData.layoutElement.dimensions.height
+            var canScrollHorizontally = clipCfg.horizontal and highestPriorityScrollData.contentSize.width > highestPriorityScrollData.layoutElement.dimensions.width
+
+            if canScrollVertically then
+                highestPriorityScrollData.scrollPosition.y = highestPriorityScrollData.scrollPosition.y + scrollDelta.y * 10.0
+            end
+            if canScrollHorizontally then
+                highestPriorityScrollData.scrollPosition.x = highestPriorityScrollData.scrollPosition.x + scrollDelta.x * 10.0
+            end
+
+            if isPointerActive then
+                highestPriorityScrollData.scrollMomentum.x = 0
+                highestPriorityScrollData.scrollMomentum.y = 0
+                if not highestPriorityScrollData.pointerScrollActive then
+                    highestPriorityScrollData.pointerOrigin = ctx.pointerInfo.position
+                    highestPriorityScrollData.scrollOrigin = highestPriorityScrollData.scrollPosition
+                    highestPriorityScrollData.pointerScrollActive = true
+                    highestPriorityScrollData.momentumTime = 0
+                else
+                    if canScrollHorizontally then
+                        highestPriorityScrollData.scrollPosition.x = highestPriorityScrollData.scrollOrigin.x + (ctx.pointerInfo.position.x - highestPriorityScrollData.pointerOrigin.x)
+                    end
+                    if canScrollVertically then
+                        highestPriorityScrollData.scrollPosition.y = highestPriorityScrollData.scrollOrigin.y + (ctx.pointerInfo.position.y - highestPriorityScrollData.pointerOrigin.y)
+                    end
+                    highestPriorityScrollData.momentumTime = highestPriorityScrollData.momentumTime + deltaTime
+                end
+            end
+        end
+    end
+end
+
+terra ui.GetScrollOffset() : config.Vector2
+    var ctx = ui.GetCurrentContext()
+    var zero: config.Vector2
+    zero.x = 0
+    zero.y = 0
+    if ctx == nil then
+        return zero
+    end
+    var openElem = ctx:getOpenLayoutElement()
+    if openElem == nil then
+        return zero
+    end
+    var scrollData = ctx:findScrollContainerData(openElem.id)
+    if scrollData ~= nil then
+        return scrollData.scrollPosition
+    end
+    var clipCfgResult = ui.FindElementConfigWithType(openElem, config.CONFIG_CLIP)
+    if clipCfgResult ~= nil and clipCfgResult.config.clipConfig ~= nil then
+        return clipCfgResult.config.clipConfig.childOffset
+    end
+    return zero
+end
+
+terra ui.GetScrollContainerData(id: hash.ElementId) : config.ScrollContainerData
+    var out: config.ScrollContainerData
+    out.scrollPosition = nil
+    out.scrollContainerDimensions.width = 0
+    out.scrollContainerDimensions.height = 0
+    out.contentDimensions.width = 0
+    out.contentDimensions.height = 0
+    out.config.horizontal = false
+    out.config.vertical = false
+    out.config.childOffset.x = 0
+    out.config.childOffset.y = 0
+    out.found = false
+
+    var ctx = ui.GetCurrentContext()
+    if ctx == nil then
+        return out
+    end
+    var scrollData = ctx:findScrollContainerData(id.id)
+    if scrollData == nil or scrollData.layoutElement == nil then
+        return out
+    end
+    var clipCfgResult = ui.FindElementConfigWithType(scrollData.layoutElement, config.CONFIG_CLIP)
+    if clipCfgResult == nil or clipCfgResult.config.clipConfig == nil then
+        return out
+    end
+    out.scrollPosition = &scrollData.scrollPosition
+    out.scrollContainerDimensions = scrollData.layoutElement.dimensions
+    out.contentDimensions = scrollData.contentSize
+    out.config = @clipCfgResult.config.clipConfig
+    out.found = true
+    return out
 end
 
 terra ui.Context:endLayout()

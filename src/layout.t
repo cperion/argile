@@ -6,9 +6,15 @@ ui.WrappedTextLine = struct {
     line : config.String
 }
 
+ui.WrappedTextLineSlice = struct {
+    internalArray : &ui.WrappedTextLine,
+    length : int32
+}
+
 ui.TextElementData = struct {
     text : config.String,
     preferredDimensions : config.Dimensions,
+    wrappedLines : ui.WrappedTextLineSlice,
     elementIndex : int32
 }
 
