@@ -1232,6 +1232,143 @@ terra ui.OpenTextElement(text: config.String, textConfig: &config.TextConfig)
     ui.OpenTextElementForContext(ui.GetCurrentContext(), text, textConfig)
 end
 
+terra ui.StringFromChars(chars: &int8, length: int32) : config.String
+    var s: config.String
+    s.isStaticallyAllocated = true
+    s.length = length
+    s.chars = chars
+    return s
+end
+
+terra ui.GetElementIdFromChars(chars: &int8, length: int32) : hash.ElementId
+    return hash.HashString(ui.StringFromChars(chars, length), 0)
+end
+
+terra ui.GetElementIdWithIndexFromChars(chars: &int8, length: int32, index: uint32) : hash.ElementId
+    return hash.HashStringWithOffset(ui.StringFromChars(chars, length), index, 0)
+end
+
+terra ui.OpenElementWithIdCharsForContext(ctx: &ui.Context, chars: &int8, length: int32)
+    ui.OpenElementWithIdForContext(ctx, ui.GetElementIdFromChars(chars, length))
+end
+
+terra ui.OpenElementWithIdChars(chars: &int8, length: int32)
+    ui.OpenElementWithIdCharsForContext(ui.GetCurrentContext(), chars, length)
+end
+
+terra ui.OpenTextElementWithLengthForContext(ctx: &ui.Context, chars: &int8, length: int32, textConfig: &config.TextConfig)
+    ui.OpenTextElementForContext(ctx, ui.StringFromChars(chars, length), textConfig)
+end
+
+terra ui.OpenTextElementWithLength(chars: &int8, length: int32, textConfig: &config.TextConfig)
+    ui.OpenTextElementWithLengthForContext(ui.GetCurrentContext(), chars, length, textConfig)
+end
+
+terra ui.SetOpenElementLayoutConfigForContext(ctx: &ui.Context, cfg: config.LayoutConfig) : bool
+    if ctx == nil then return false end
+    var elem = ctx:getOpenLayoutElement()
+    if elem == nil then return false end
+    var layoutCfg = ctx:storeLayoutConfig(cfg)
+    if layoutCfg == nil then return false end
+    elem.layoutConfig = layoutCfg
+    return true
+end
+
+terra ui.SetOpenElementLayoutConfig(cfg: config.LayoutConfig) : bool
+    return ui.SetOpenElementLayoutConfigForContext(ui.GetCurrentContext(), cfg)
+end
+
+terra ui.AttachSharedConfigForContext(ctx: &ui.Context, cfg: config.SharedConfig) : bool
+    if ctx == nil then return false end
+    var sharedCfg = ctx:storeSharedConfig(cfg)
+    if sharedCfg == nil then return false end
+    var cfgUnion: config.ElementConfigUnion
+    cfgUnion.sharedConfig = sharedCfg
+    return ctx:attachElementConfig(cfgUnion, config.CONFIG_SHARED) ~= nil
+end
+
+terra ui.AttachSharedConfig(cfg: config.SharedConfig) : bool
+    return ui.AttachSharedConfigForContext(ui.GetCurrentContext(), cfg)
+end
+
+terra ui.AttachBorderConfigForContext(ctx: &ui.Context, cfg: config.BorderConfig) : bool
+    if ctx == nil then return false end
+    var borderCfg = ctx:storeBorderConfig(cfg)
+    if borderCfg == nil then return false end
+    var cfgUnion: config.ElementConfigUnion
+    cfgUnion.borderConfig = borderCfg
+    return ctx:attachElementConfig(cfgUnion, config.CONFIG_BORDER) ~= nil
+end
+
+terra ui.AttachBorderConfig(cfg: config.BorderConfig) : bool
+    return ui.AttachBorderConfigForContext(ui.GetCurrentContext(), cfg)
+end
+
+terra ui.AttachClipConfigForContext(ctx: &ui.Context, cfg: config.ClipConfig) : bool
+    if ctx == nil then return false end
+    var clipCfg = ctx:storeClipConfig(cfg)
+    if clipCfg == nil then return false end
+    var cfgUnion: config.ElementConfigUnion
+    cfgUnion.clipConfig = clipCfg
+    return ctx:attachElementConfig(cfgUnion, config.CONFIG_CLIP) ~= nil
+end
+
+terra ui.AttachClipConfig(cfg: config.ClipConfig) : bool
+    return ui.AttachClipConfigForContext(ui.GetCurrentContext(), cfg)
+end
+
+terra ui.AttachFloatingConfigForContext(ctx: &ui.Context, cfg: config.FloatingConfig) : bool
+    if ctx == nil then return false end
+    var floatingCfg = ctx:storeFloatingConfig(cfg)
+    if floatingCfg == nil then return false end
+    var cfgUnion: config.ElementConfigUnion
+    cfgUnion.floatingConfig = floatingCfg
+    return ctx:attachElementConfig(cfgUnion, config.CONFIG_FLOATING) ~= nil
+end
+
+terra ui.AttachFloatingConfig(cfg: config.FloatingConfig) : bool
+    return ui.AttachFloatingConfigForContext(ui.GetCurrentContext(), cfg)
+end
+
+terra ui.AttachAspectRatioConfigForContext(ctx: &ui.Context, cfg: config.AspectRatioConfig) : bool
+    if ctx == nil then return false end
+    var aspectCfg = ctx:storeAspectRatioConfig(cfg)
+    if aspectCfg == nil then return false end
+    var cfgUnion: config.ElementConfigUnion
+    cfgUnion.aspectRatioConfig = aspectCfg
+    return ctx:attachElementConfig(cfgUnion, config.CONFIG_ASPECT) ~= nil
+end
+
+terra ui.AttachAspectRatioConfig(cfg: config.AspectRatioConfig) : bool
+    return ui.AttachAspectRatioConfigForContext(ui.GetCurrentContext(), cfg)
+end
+
+terra ui.AttachImageConfigForContext(ctx: &ui.Context, cfg: config.ImageConfig) : bool
+    if ctx == nil then return false end
+    var imageCfg = ctx:storeImageConfig(cfg)
+    if imageCfg == nil then return false end
+    var cfgUnion: config.ElementConfigUnion
+    cfgUnion.imageConfig = imageCfg
+    return ctx:attachElementConfig(cfgUnion, config.CONFIG_IMAGE) ~= nil
+end
+
+terra ui.AttachImageConfig(cfg: config.ImageConfig) : bool
+    return ui.AttachImageConfigForContext(ui.GetCurrentContext(), cfg)
+end
+
+terra ui.AttachCustomConfigForContext(ctx: &ui.Context, cfg: config.CustomConfig) : bool
+    if ctx == nil then return false end
+    var customCfg = ctx:storeCustomConfig(cfg)
+    if customCfg == nil then return false end
+    var cfgUnion: config.ElementConfigUnion
+    cfgUnion.customConfig = customCfg
+    return ctx:attachElementConfig(cfgUnion, config.CONFIG_CUSTOM) ~= nil
+end
+
+terra ui.AttachCustomConfig(cfg: config.CustomConfig) : bool
+    return ui.AttachCustomConfigForContext(ui.GetCurrentContext(), cfg)
+end
+
 terra ui.GetElementId(idString: config.String) : hash.ElementId
     return hash.HashString(idString, 0)
 end

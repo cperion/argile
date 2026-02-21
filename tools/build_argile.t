@@ -235,11 +235,16 @@ local typedef_lines = {
     "typedef unsigned long long uint64_t;",
 }
 
+local alias_typedef_lines = {}
 for _, key in ipairs(sorted_keys(ui, function(_, v)
     return terralib.type(v) == "terratype" and not v:isstruct()
 end)) do
     local t = ui[key]
-    typedef_lines[#typedef_lines + 1] = string.format("typedef %s %s;", type_to_c(t), key)
+    alias_typedef_lines[#alias_typedef_lines + 1] = string.format("typedef %s %s;", type_to_c(t), key)
+end
+
+for _, line in ipairs(alias_typedef_lines) do
+    typedef_lines[#typedef_lines + 1] = line
 end
 
 local function struct_dep_name(t)
@@ -391,5 +396,53 @@ local f = assert(io.open("build/argile_api_ffi.lua", "w"))
 f:write(table.concat(out, "\n"))
 f:close()
 
+local out_h = {}
+out_h[#out_h + 1] = "#ifndef ARGILE_API_H"
+out_h[#out_h + 1] = "#define ARGILE_API_H"
+out_h[#out_h + 1] = ""
+out_h[#out_h + 1] = "#include <stdbool.h>"
+out_h[#out_h + 1] = "#include <stddef.h>"
+out_h[#out_h + 1] = "#include <stdint.h>"
+out_h[#out_h + 1] = ""
+out_h[#out_h + 1] = "#ifdef __cplusplus"
+out_h[#out_h + 1] = "extern \"C\" {"
+out_h[#out_h + 1] = "#endif"
+out_h[#out_h + 1] = ""
+out_h[#out_h + 1] = "/* Forward Struct Declarations */"
+for _, name in ipairs(forward_names) do
+    out_h[#out_h + 1] = "struct " .. name .. ";"
+end
+out_h[#out_h + 1] = ""
+out_h[#out_h + 1] = "/* Typedefs */"
+for _, line in ipairs(alias_typedef_lines) do
+    out_h[#out_h + 1] = line
+end
+out_h[#out_h + 1] = ""
+out_h[#out_h + 1] = "/* Struct Definitions */"
+for _, def in ipairs(struct_defs) do
+    out_h[#out_h + 1] = def
+end
+out_h[#out_h + 1] = ""
+out_h[#out_h + 1] = "/* Constants */"
+for _, c in ipairs(constants) do
+    out_h[#out_h + 1] = c
+end
+out_h[#out_h + 1] = ""
+out_h[#out_h + 1] = "/* Functions */"
+for _, fdecl in ipairs(function_decls) do
+    out_h[#out_h + 1] = fdecl
+end
+out_h[#out_h + 1] = ""
+out_h[#out_h + 1] = "#ifdef __cplusplus"
+out_h[#out_h + 1] = "}"
+out_h[#out_h + 1] = "#endif"
+out_h[#out_h + 1] = ""
+out_h[#out_h + 1] = "#endif /* ARGILE_API_H */"
+
+local h = assert(io.open("build/argile_api.h", "w"))
+h:write(table.concat(out_h, "\n"))
+h:close()
+
 print("built build/libargile.so")
 print("generated build/argile_api_ffi.lua")
+print("generated build/argile_api.h")

@@ -29,6 +29,7 @@ test:
 	$(TERRA) tests/test_foundation.t
 	$(TERRA) tests/test_layout.t
 	$(TERRA) tests/test_builder.t
+	$(TERRA) tests/test_language_extension.t
 
 bench: build-bench
 	$(LUAJIT) bench/compare.lua heavy
