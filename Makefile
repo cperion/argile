@@ -29,6 +29,7 @@ love-demo-portable: build
 	love backends/love2d/demo
 
 raylib-demo: build
+	@echo "Note: Raylib demo may crash on Wayland (GLFW limitation). Use X11 or see backends/raylib/README.md"
 	$(TERRA) backends/raylib/demo/main.t
 
 test:
