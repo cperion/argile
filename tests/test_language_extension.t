@@ -4,7 +4,8 @@ local C = terralib.includecstring[[
 ]]
 
 local ui = require("src.builder")
-import "src.lang.argile"
+local ds = require("src/style/default_theme")
+import "src/lang.argile"
 
 local compiled_expr = argile el("lang_expr_root")
     layout
@@ -12,23 +13,22 @@ local compiled_expr = argile el("lang_expr_root")
         height_fixed(480.0)
         dir(top_to_bottom)
     end
-    shared
-        color(0.15, 0.2, 0.3, 1.0)
+    style
+        bg(ds.colors.surface_800)
     end
     el("lang_expr_child")
         layout
             width_fixed(120.0)
             height_fixed(32.0)
         end
-        shared
-            color(0.7, 0.2, 0.1, 1.0)
+        style
+            bg(ds.colors.primary_500)
         end
     end
 end
 
 local dsl_root_id = "lang_dsl_root"
 local dsl_text = "dsl text node"
-local dsl_border_width = 2
 local compiled_dsl = argile el(dsl_root_id)
     layout
         width_fixed(520.0)
@@ -37,39 +37,10 @@ local compiled_dsl = argile el(dsl_root_id)
         padding(10)
         gap(6)
     end
-    shared
-        color(0.08, 0.12, 0.2, 1.0)
-        radius(5.0)
-    end
-    border
-        color(0.9, 0.3, 0.2, 1.0)
-        width(dsl_border_width)
-    end
-    clip
-        horizontal(true)
-        vertical(true)
-        offset(1.0, 2.0)
-    end
-    aspect
-        ratio(1.6)
-    end
-    floating
-        offset(2.0, 3.0)
-        expand(0.0, 0.0)
-        parent_id(0)
-        z_index(1)
-        element_attach(center_top)
-        parent_attach(center_top)
-        pointer_capture(capture)
-        attach_to(parent)
-        clip_to(attached_parent)
-    end
+    use(ds.panel())
     text(dsl_text)
-        textcfg
-            color(1.0, 1.0, 1.0, 1.0)
-            font_size(15)
-            line_height(18)
-            wrap(words)
+        use(ds.text.body())
+        typography
             align(center)
         end
     end
@@ -77,12 +48,6 @@ local compiled_dsl = argile el(dsl_root_id)
         layout
             width_grow
             height_fixed(40)
-        end
-        custom
-            data(nil)
-        end
-        image
-            data(nil)
         end
     end
 end
@@ -95,20 +60,10 @@ local compiled_dsl_end = argile el("lang_dsl_end_root")
         padding(8)
         gap(4)
     end
-    shared
-        color(0.11, 0.16, 0.24, 1.0)
-        radius(4.0)
-    end
-    border
-        color(0.95, 0.7, 0.2, 1.0)
-        width(1)
-    end
+    use(ds.panel())
     text("dsl end style")
-        textcfg
-            color(1.0, 1.0, 0.9, 1.0)
-            font_size(13)
-            line_height(16)
-            wrap(words)
+        use(ds.text.muted())
+        typography
             align(left)
         end
     end
@@ -116,9 +71,6 @@ local compiled_dsl_end = argile el("lang_dsl_end_root")
         layout
             width_grow
             height_fixed(24.0)
-        end
-        custom
-            data(nil)
         end
     end
 end
@@ -128,8 +80,8 @@ argile compiled_stmt = el("lang_stmt_root")
         width_fixed(320.0)
         height_fixed(120.0)
     end
-    shared
-        color(0.3, 0.35, 0.4, 1.0)
+    style
+        bg(ds.colors.surface_600)
     end
 end
 
@@ -139,9 +91,7 @@ argile compiled_stmt_dsl = el("lang_stmt_dsl_root")
         height_fixed(90.0)
         padding(6)
     end
-    shared
-        color(0.25, 0.35, 0.45, 1.0)
-    end
+    use(ds.panel())
     text("statement dsl")
 end
 
@@ -151,8 +101,8 @@ do
             width_fixed(240.0)
             height_fixed(100.0)
         end
-        shared
-            color(0.4, 0.2, 0.55, 1.0)
+        style
+            bg(ds.colors.primary_700)
         end
     end
     _G.__compiled_local_layout = compiled_local
@@ -164,12 +114,29 @@ do
             width_fixed(220.0)
             height_fixed(70.0)
         end
-        shared
-            color(0.2, 0.2, 0.2, 1.0)
-        end
+        use(ds.panel())
         text("local statement dsl")
     end
     _G.__compiled_local_dsl_layout = compiled_local_dsl
+end
+
+local compiled_button = argile el("test_button")
+    use(ds.button({ tone = "primary", size = "md" }))
+    text("Click Me")
+        use(ds.text.button())
+    end
+end
+
+local compiled_with_state = argile el("stateful_element")
+    use(ds.button({ tone = "primary" }))
+    when hover
+        style
+            bg(ds.colors.primary_600)
+        end
+    end
+    text("Hover Me")
+        use(ds.text.button())
+    end
 end
 
 if not terralib.isquote(compiled_expr) then
@@ -192,6 +159,12 @@ if not terralib.isquote(_G.__compiled_local_layout) then
 end
 if not terralib.isquote(_G.__compiled_local_dsl_layout) then
     error("argile local statement DSL form did not produce a Terra quote")
+end
+if not terralib.isquote(compiled_button) then
+    error("argile button with recipe did not produce a Terra quote")
+end
+if not terralib.isquote(compiled_with_state) then
+    error("argile stateful element did not produce a Terra quote")
 end
 
 terra run_language_extension_test() : int32
@@ -267,6 +240,22 @@ terra run_language_extension_test() : int32
     var cmd_count_local_dsl = ui.FinalizeLayout()
     if cmd_count_local_dsl <= 0 then
         C.printf("FAIL: local statement DSL form generated no commands\n")
+        failed = failed + 1
+    end
+
+    ui.BeginLayout(640.0, 480.0)
+    [compiled_button]
+    var cmd_count_button = ui.FinalizeLayout()
+    if cmd_count_button <= 0 then
+        C.printf("FAIL: button with recipe generated no commands\n")
+        failed = failed + 1
+    end
+
+    ui.BeginLayout(640.0, 480.0)
+    [compiled_with_state]
+    var cmd_count_state = ui.FinalizeLayout()
+    if cmd_count_state <= 0 then
+        C.printf("FAIL: stateful element generated no commands\n")
         failed = failed + 1
     end
 

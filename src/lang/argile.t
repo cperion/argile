@@ -29,35 +29,6 @@ local text_align_values = {
     right = ui.TEXT_ALIGN_RIGHT,
 }
 
-local attach_point_values = {
-    left_top = ui.ATTACH_LEFT_TOP,
-    left_center = ui.ATTACH_LEFT_CENTER,
-    left_bottom = ui.ATTACH_LEFT_BOTTOM,
-    center_top = ui.ATTACH_CENTER_TOP,
-    center_center = ui.ATTACH_CENTER_CENTER,
-    center_bottom = ui.ATTACH_CENTER_BOTTOM,
-    right_top = ui.ATTACH_RIGHT_TOP,
-    right_center = ui.ATTACH_RIGHT_CENTER,
-    right_bottom = ui.ATTACH_RIGHT_BOTTOM,
-}
-
-local pointer_capture_values = {
-    capture = ui.POINTER_CAPTURE,
-    passthrough = ui.POINTER_PASSTHROUGH,
-}
-
-local attach_to_values = {
-    none = ui.ATTACH_NONE,
-    parent = ui.ATTACH_PARENT,
-    element_with_id = ui.ATTACH_ELEMENT_WITH_ID,
-    root = ui.ATTACH_ROOT,
-}
-
-local clip_to_values = {
-    none = ui.CLIP_NONE,
-    attached_parent = ui.CLIP_ATTACHED_PARENT,
-}
-
 local symbol_values = {}
 local function insert_symbol_values(values)
     for k, v in pairs(values) do
@@ -70,10 +41,14 @@ insert_symbol_values(align_x_values)
 insert_symbol_values(align_y_values)
 insert_symbol_values(text_wrap_values)
 insert_symbol_values(text_align_values)
-insert_symbol_values(attach_point_values)
-insert_symbol_values(pointer_capture_values)
-insert_symbol_values(attach_to_values)
-insert_symbol_values(clip_to_values)
+
+local valid_states = {
+    hover = true,
+    active = true,
+    disabled = true,
+    focus = true,
+    selected = true,
+}
 
 local function coerce_enum(value, map, fallback)
     if value == nil then
@@ -89,13 +64,6 @@ local function coerce_enum(value, map, fallback)
         end
     end
     return value
-end
-
-local function ensure_table(tbl, key)
-    if type(tbl[key]) ~= "table" then
-        tbl[key] = {}
-    end
-    return tbl[key]
 end
 
 local function matches_word(lex, word)
@@ -124,16 +92,13 @@ local function consume_separators(lex)
     return consumed
 end
 
-local function is_body_keyword(lex)
+local function is_v2_body_keyword(lex)
     return matches_word(lex, "layout")
-        or matches_word(lex, "shared")
-        or matches_word(lex, "border")
-        or matches_word(lex, "clip")
-        or matches_word(lex, "aspect")
-        or matches_word(lex, "image")
-        or matches_word(lex, "custom")
-        or matches_word(lex, "floating")
-        or matches_word(lex, "textcfg")
+        or matches_word(lex, "use")
+        or matches_word(lex, "style")
+        or matches_word(lex, "typography")
+        or matches_word(lex, "paint")
+        or matches_word(lex, "when")
         or matches_word(lex, "el")
         or matches_word(lex, "text")
 end
@@ -198,7 +163,7 @@ local function eval_arg(op, index, environment_function, fallback)
     return value
 end
 
-local function parse_config_ops(lex, keyword)
+local function parse_block_ops(lex, keyword)
     expect_word(lex, keyword)
     local ops = {}
     while not matches_word(lex, "end") do
@@ -271,216 +236,74 @@ local function apply_layout_op(cfg, op, environment_function)
     end
 end
 
-local function apply_shared_op(cfg, op, environment_function)
-    local n = op.name
-    if n == "color" then
-        local color = ensure_table(cfg, "backgroundColor")
-        color.r = eval_arg(op, 1, environment_function, 0.0)
-        color.g = eval_arg(op, 2, environment_function, 0.0)
-        color.b = eval_arg(op, 3, environment_function, 0.0)
-        color.a = eval_arg(op, 4, environment_function, 1.0)
-    elseif n == "radius" then
-        local r = eval_arg(op, 1, environment_function, 0.0)
-        cfg.cornerRadius = {
-            topLeft = r,
-            topRight = r,
-            bottomLeft = r,
-            bottomRight = r,
-        }
-    elseif n == "radius4" then
-        cfg.cornerRadius = {
-            topLeft = eval_arg(op, 1, environment_function, 0.0),
-            topRight = eval_arg(op, 2, environment_function, 0.0),
-            bottomLeft = eval_arg(op, 3, environment_function, 0.0),
-            bottomRight = eval_arg(op, 4, environment_function, 0.0),
-        }
-    elseif n == "user_data" then
-        cfg.userData = eval_arg(op, 1, environment_function, nil)
-    else
-        error("argile shared: unknown operation '" .. tostring(n) .. "'")
-    end
-end
-
-local function apply_border_op(cfg, op, environment_function)
-    local n = op.name
-    if n == "color" then
-        local color = ensure_table(cfg, "color")
-        color.r = eval_arg(op, 1, environment_function, 0.0)
-        color.g = eval_arg(op, 2, environment_function, 0.0)
-        color.b = eval_arg(op, 3, environment_function, 0.0)
-        color.a = eval_arg(op, 4, environment_function, 1.0)
-    elseif n == "width" then
-        local w = eval_arg(op, 1, environment_function, 0)
-        cfg.width = {
-            left = w,
-            right = w,
-            top = w,
-            bottom = w,
-            betweenChildren = 0,
-        }
-    elseif n == "width4" then
-        local width = ensure_table(cfg, "width")
-        width.left = eval_arg(op, 1, environment_function, 0)
-        width.right = eval_arg(op, 2, environment_function, 0)
-        width.top = eval_arg(op, 3, environment_function, 0)
-        width.bottom = eval_arg(op, 4, environment_function, 0)
-    elseif n == "between_children" then
-        local width = ensure_table(cfg, "width")
-        width.betweenChildren = eval_arg(op, 1, environment_function, 0)
-    else
-        error("argile border: unknown operation '" .. tostring(n) .. "'")
-    end
-end
-
-local function apply_clip_op(cfg, op, environment_function)
-    local n = op.name
-    if n == "horizontal" then
-        cfg.horizontal = eval_arg(op, 1, environment_function, false)
-    elseif n == "vertical" then
-        cfg.vertical = eval_arg(op, 1, environment_function, false)
-    elseif n == "offset" then
-        cfg.childOffset = {
-            x = eval_arg(op, 1, environment_function, 0.0),
-            y = eval_arg(op, 2, environment_function, 0.0),
-        }
-    else
-        error("argile clip: unknown operation '" .. tostring(n) .. "'")
-    end
-end
-
-local function apply_aspect_op(cfg, op, environment_function)
-    local n = op.name
-    if n == "ratio" then
-        cfg.aspectRatio = eval_arg(op, 1, environment_function, 1.0)
-    else
-        error("argile aspect: unknown operation '" .. tostring(n) .. "'")
-    end
-end
-
-local function apply_image_op(cfg, op, environment_function)
-    local n = op.name
-    if n == "data" then
-        cfg.imageData = eval_arg(op, 1, environment_function, nil)
-    else
-        error("argile image: unknown operation '" .. tostring(n) .. "'")
-    end
-end
-
-local function apply_custom_op(cfg, op, environment_function)
-    local n = op.name
-    if n == "data" then
-        cfg.customData = eval_arg(op, 1, environment_function, nil)
-    else
-        error("argile custom: unknown operation '" .. tostring(n) .. "'")
-    end
-end
-
-local function apply_floating_op(cfg, op, environment_function)
-    local n = op.name
-    if n == "offset" then
-        cfg.offset = {
-            x = eval_arg(op, 1, environment_function, 0.0),
-            y = eval_arg(op, 2, environment_function, 0.0),
-        }
-    elseif n == "expand" then
-        cfg.expand = {
-            width = eval_arg(op, 1, environment_function, 0.0),
-            height = eval_arg(op, 2, environment_function, 0.0),
-        }
-    elseif n == "parent_id" then
-        cfg.parentId = eval_arg(op, 1, environment_function, 0)
-    elseif n == "z_index" then
-        cfg.zIndex = eval_arg(op, 1, environment_function, 0)
-    elseif n == "element_attach" then
-        cfg.elementAttach = coerce_enum(eval_arg(op, 1, environment_function, ui.ATTACH_LEFT_TOP), attach_point_values, ui.ATTACH_LEFT_TOP)
-    elseif n == "parent_attach" then
-        cfg.parentAttach = coerce_enum(eval_arg(op, 1, environment_function, ui.ATTACH_LEFT_TOP), attach_point_values, ui.ATTACH_LEFT_TOP)
-    elseif n == "pointer_capture" then
-        cfg.pointerCaptureMode = coerce_enum(eval_arg(op, 1, environment_function, ui.POINTER_CAPTURE), pointer_capture_values, ui.POINTER_CAPTURE)
-    elseif n == "attach_to" then
-        cfg.attachTo = coerce_enum(eval_arg(op, 1, environment_function, ui.ATTACH_NONE), attach_to_values, ui.ATTACH_NONE)
-    elseif n == "clip_to" then
-        cfg.clipTo = coerce_enum(eval_arg(op, 1, environment_function, ui.CLIP_NONE), clip_to_values, ui.CLIP_NONE)
-    else
-        error("argile floating: unknown operation '" .. tostring(n) .. "'")
-    end
-end
-
-local function apply_textcfg_op(cfg, op, environment_function)
-    local n = op.name
-    if n == "color" then
-        local color = ensure_table(cfg, "textColor")
-        color.r = eval_arg(op, 1, environment_function, 0.0)
-        color.g = eval_arg(op, 2, environment_function, 0.0)
-        color.b = eval_arg(op, 3, environment_function, 0.0)
-        color.a = eval_arg(op, 4, environment_function, 1.0)
-    elseif n == "font_id" then
-        cfg.fontId = eval_arg(op, 1, environment_function, 0)
-    elseif n == "font_size" then
-        cfg.fontSize = eval_arg(op, 1, environment_function, 16)
-    elseif n == "letter_spacing" then
-        cfg.letterSpacing = eval_arg(op, 1, environment_function, 0)
-    elseif n == "line_height" then
-        cfg.lineHeight = eval_arg(op, 1, environment_function, 0)
-    elseif n == "wrap" then
-        cfg.wrapMode = coerce_enum(eval_arg(op, 1, environment_function, ui.TEXT_WRAP_WORDS), text_wrap_values, ui.TEXT_WRAP_WORDS)
-    elseif n == "align" then
-        cfg.textAlignment = coerce_enum(eval_arg(op, 1, environment_function, ui.TEXT_ALIGN_LEFT), text_align_values, ui.TEXT_ALIGN_LEFT)
-    elseif n == "user_data" then
-        cfg.userData = eval_arg(op, 1, environment_function, nil)
-    else
-        error("argile textcfg: unknown operation '" .. tostring(n) .. "'")
-    end
-end
-
-local function build_cfg(ops, apply_fn, environment_function)
+local function build_layout_cfg(ops, environment_function)
     local cfg = {}
     for _, op in ipairs(ops) do
-        apply_fn(cfg, op, environment_function)
+        apply_layout_op(cfg, op, environment_function)
     end
     return cfg
 end
 
-local parse_node_builder
+local function eval_ops_list(op_blocks, environment_function)
+    if #op_blocks == 0 then
+        return nil
+    end
 
-local function parse_container_body(lex, allow_textcfg)
+    local out = {}
+    for _, ops in ipairs(op_blocks) do
+        for _, op in ipairs(ops) do
+            local args = {}
+            if op.args then
+                for i, arg_fn in ipairs(op.args) do
+                    args[i] = arg_fn(environment_function)
+                end
+            end
+            table.insert(out, { name = op.name, args = args })
+        end
+    end
+    return out
+end
+
+local parse_v2_node_builder
+local parse_v2_state_block
+
+local function parse_v2_container_body(lex, is_text_node)
     local layout_ops = nil
-    local shared_ops = nil
-    local border_ops = nil
-    local clip_ops = nil
-    local aspect_ops = nil
-    local image_ops = nil
-    local custom_ops = nil
-    local floating_ops = nil
-    local textcfg_ops = nil
+    local use_patches = {}
+    local style_ops_list = {}
+    local typography_ops_list = {}
+    local paint_ops_list = {}
+    local state_builders = {}
     local child_builders = {}
 
     while not matches_word(lex, "end") do
         if consume_separators(lex) then
             -- noop
         elseif matches_word(lex, "layout") then
-            layout_ops = parse_config_ops(lex, "layout")
-        elseif matches_word(lex, "shared") then
-            shared_ops = parse_config_ops(lex, "shared")
-        elseif matches_word(lex, "border") then
-            border_ops = parse_config_ops(lex, "border")
-        elseif matches_word(lex, "clip") then
-            clip_ops = parse_config_ops(lex, "clip")
-        elseif matches_word(lex, "aspect") then
-            aspect_ops = parse_config_ops(lex, "aspect")
-        elseif matches_word(lex, "image") then
-            image_ops = parse_config_ops(lex, "image")
-        elseif matches_word(lex, "custom") then
-            custom_ops = parse_config_ops(lex, "custom")
-        elseif matches_word(lex, "floating") then
-            floating_ops = parse_config_ops(lex, "floating")
-        elseif matches_word(lex, "textcfg") then
-            if not allow_textcfg then
-                lex:error("argile: textcfg is only valid inside text nodes")
+            layout_ops = parse_block_ops(lex, "layout")
+        elseif matches_word(lex, "use") then
+            expect_word(lex, "use")
+            lex:expect("(")
+            local patch_expr = lex:luaexpr()
+            lex:expect(")")
+            table.insert(use_patches, patch_expr)
+        elseif matches_word(lex, "style") then
+            local ops = parse_block_ops(lex, "style")
+            table.insert(style_ops_list, ops)
+        elseif matches_word(lex, "typography") then
+            if not is_text_node then
+                lex:error("argile: typography is only valid inside text nodes")
             end
-            textcfg_ops = parse_config_ops(lex, "textcfg")
+            local ops = parse_block_ops(lex, "typography")
+            table.insert(typography_ops_list, ops)
+        elseif matches_word(lex, "paint") then
+            local ops = parse_block_ops(lex, "paint")
+            table.insert(paint_ops_list, ops)
+        elseif matches_word(lex, "when") then
+            local state_name, state_builder = parse_v2_state_block(lex, is_text_node)
+            state_builders[state_name] = state_builder
         elseif matches_word(lex, "el") or matches_word(lex, "text") then
-            child_builders[#child_builders + 1] = parse_node_builder(lex)
+            child_builders[#child_builders + 1] = parse_v2_node_builder(lex)
         else
             lex:error("argile: unexpected token in node body")
         end
@@ -491,44 +314,118 @@ local function parse_container_body(lex, allow_textcfg)
 
     return function(environment_function)
         local node = {}
+        
         if layout_ops then
-            node.layout = build_cfg(layout_ops, apply_layout_op, environment_function)
+            node.layout = build_layout_cfg(layout_ops, environment_function)
         end
-        if shared_ops then
-            node.shared = build_cfg(shared_ops, apply_shared_op, environment_function)
+        
+        if #use_patches > 0 then
+            node.use_patches = {}
+            for _, expr in ipairs(use_patches) do
+                local patch = expr(environment_function())
+                if patch ~= nil then
+                    table.insert(node.use_patches, patch)
+                end
+            end
         end
-        if border_ops then
-            node.border = build_cfg(border_ops, apply_border_op, environment_function)
+        
+        node.style_ops = eval_ops_list(style_ops_list, environment_function)
+        node.typography_ops = eval_ops_list(typography_ops_list, environment_function)
+        node.paint_ops = eval_ops_list(paint_ops_list, environment_function)
+        
+        local has_state = false
+        for _ in pairs(state_builders) do
+            has_state = true
+            break
         end
-        if clip_ops then
-            node.clip = build_cfg(clip_ops, apply_clip_op, environment_function)
+        if has_state then
+            node.states = {}
+            for state_name, builder in pairs(state_builders) do
+                node.states[state_name] = builder(environment_function)
+            end
         end
-        if aspect_ops then
-            node.aspect = build_cfg(aspect_ops, apply_aspect_op, environment_function)
-        end
-        if image_ops then
-            node.image = build_cfg(image_ops, apply_image_op, environment_function)
-        end
-        if custom_ops then
-            node.custom = build_cfg(custom_ops, apply_custom_op, environment_function)
-        end
-        if floating_ops then
-            node.floating = build_cfg(floating_ops, apply_floating_op, environment_function)
-        end
-        if textcfg_ops then
-            node.textConfig = build_cfg(textcfg_ops, apply_textcfg_op, environment_function)
-        end
+        
         if #child_builders > 0 then
             node.children = {}
             for _, builder in ipairs(child_builders) do
                 node.children[#node.children + 1] = builder(environment_function)
             end
         end
+        
         return node
     end
 end
 
-local function parse_element_builder(lex)
+parse_v2_state_block = function(lex, is_text_node)
+    expect_word(lex, "when")
+    
+    if not lex:matches(lex.name) then
+        lex:errorexpected("state name")
+    end
+    local state_name = lex:next().value
+    
+    if not valid_states[state_name] then
+        lex:error("argile: invalid state '" .. state_name .. "'. Valid states: hover, active, disabled, focus, selected")
+    end
+    
+    local use_patches = {}
+    local style_ops_list = {}
+    local typography_ops_list = {}
+    local paint_ops_list = {}
+
+    while not matches_word(lex, "end") do
+        if consume_separators(lex) then
+            -- noop
+        elseif matches_word(lex, "use") then
+            expect_word(lex, "use")
+            lex:expect("(")
+            local patch_expr = lex:luaexpr()
+            lex:expect(")")
+            table.insert(use_patches, patch_expr)
+        elseif matches_word(lex, "style") then
+            local ops = parse_block_ops(lex, "style")
+            table.insert(style_ops_list, ops)
+        elseif matches_word(lex, "typography") then
+            if not is_text_node then
+                lex:error("argile: typography is only valid inside text nodes")
+            end
+            local ops = parse_block_ops(lex, "typography")
+            table.insert(typography_ops_list, ops)
+        elseif matches_word(lex, "paint") then
+            local ops = parse_block_ops(lex, "paint")
+            table.insert(paint_ops_list, ops)
+        else
+            lex:error("argile: unexpected token in when block (only use, style, typography, paint allowed)")
+        end
+        consume_separators(lex)
+    end
+
+    expect_word(lex, "end")
+
+    local builder = function(environment_function)
+        local node = {}
+        
+        if #use_patches > 0 then
+            node.use_patches = {}
+            for _, expr in ipairs(use_patches) do
+                local patch = expr(environment_function())
+                if patch ~= nil then
+                    table.insert(node.use_patches, patch)
+                end
+            end
+        end
+        
+        node.style_ops = eval_ops_list(style_ops_list, environment_function)
+        node.typography_ops = eval_ops_list(typography_ops_list, environment_function)
+        node.paint_ops = eval_ops_list(paint_ops_list, environment_function)
+        
+        return node
+    end
+
+    return state_name, builder
+end
+
+local function parse_v2_element_builder(lex)
     expect_word(lex, "el")
 
     local id_value = nil
@@ -537,7 +434,7 @@ local function parse_element_builder(lex)
         lex:expect(")")
     end
 
-    local body_builder = parse_container_body(lex, false)
+    local body_builder = parse_v2_container_body(lex, false)
     return function(environment_function)
         local node = body_builder(environment_function)
         if id_value ~= nil then
@@ -547,15 +444,15 @@ local function parse_element_builder(lex)
     end
 end
 
-local function parse_text_builder(lex)
+local function parse_v2_text_builder(lex)
     expect_word(lex, "text")
     lex:expect("(")
     local text_value = parse_value_fn(lex, nil)
     lex:expect(")")
 
     local body_builder = nil
-    if is_body_keyword(lex) then
-        body_builder = parse_container_body(lex, true)
+    if is_v2_body_keyword(lex) then
+        body_builder = parse_v2_container_body(lex, true)
     end
 
     return function(environment_function)
@@ -565,20 +462,20 @@ local function parse_text_builder(lex)
     end
 end
 
-parse_node_builder = function(lex)
+parse_v2_node_builder = function(lex)
     if matches_word(lex, "el") then
-        return parse_element_builder(lex)
+        return parse_v2_element_builder(lex)
     elseif matches_word(lex, "text") then
-        return parse_text_builder(lex)
+        return parse_v2_text_builder(lex)
     end
     lex:error("argile: expected 'el' or 'text'")
 end
 
 local function parse_root_constructor(lex)
     if matches_word(lex, "el") or matches_word(lex, "text") then
-        local node_builder = parse_node_builder(lex)
+        local node_builder = parse_v2_node_builder(lex)
         return function(environment_function)
-            return ui.compile(node_builder(environment_function))
+            return ui.compileResolved(node_builder(environment_function))
         end
     end
     lex:error("argile: expected root node 'el' or 'text'")
@@ -597,14 +494,11 @@ local language = {
         "el",
         "text",
         "layout",
-        "shared",
-        "border",
-        "clip",
-        "aspect",
-        "image",
-        "custom",
-        "floating",
-        "textcfg",
+        "use",
+        "style",
+        "typography",
+        "paint",
+        "when",
     };
     expression = function(self, lex)
         lex:expect("argile")
