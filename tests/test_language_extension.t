@@ -139,6 +139,23 @@ local compiled_with_state = argile el("stateful_element")
     end
 end
 
+local compiled_with_paint = argile el("painted_element")
+    layout
+        width_fixed(100.0)
+        height_fixed(100.0)
+    end
+    style
+        bg(ds.colors.surface_800)
+        radius(8.0)
+    end
+    paint
+        fill(ds.colors.primary_500)
+        round_rect(10, 10, 80, 80, 8)
+        stroke(ds.colors.primary_700, 2)
+        line(10, 50, 90, 50)
+    end
+end
+
 if not terralib.isquote(compiled_expr) then
     error("argile expression form did not produce a Terra quote")
 end
@@ -165,6 +182,9 @@ if not terralib.isquote(compiled_button) then
 end
 if not terralib.isquote(compiled_with_state) then
     error("argile stateful element did not produce a Terra quote")
+end
+if not terralib.isquote(compiled_with_paint) then
+    error("argile element with paint did not produce a Terra quote")
 end
 
 terra run_language_extension_test() : int32
@@ -257,6 +277,28 @@ terra run_language_extension_test() : int32
     if cmd_count_state <= 0 then
         C.printf("FAIL: stateful element generated no commands\n")
         failed = failed + 1
+    end
+
+    ui.BeginLayout(640.0, 480.0)
+    [compiled_with_paint]
+    var cmd_count_paint = ui.FinalizeLayout()
+    if cmd_count_paint <= 0 then
+        C.printf("FAIL: element with paint generated no commands\n")
+        failed = failed + 1
+    else
+        var found_paint = false
+        var i: int32 = 0
+        while i < cmd_count_paint do
+            var cmd = ui.GetRenderCommandAt(i)
+            if cmd.commandType == ui.RENDER_PAINT then
+                found_paint = true
+            end
+            i = i + 1
+        end
+        if not found_paint then
+            C.printf("FAIL: no RENDER_PAINT command found\n")
+            failed = failed + 1
+        end
     end
 
     var id_from_chars = ui.GetElementIdFromChars("id_test", 7)

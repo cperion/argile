@@ -274,6 +274,54 @@ local function compileTextConfig(cfg)
     end
 end
 
+local function compilePaintConfig(paint_ops)
+    if not paint_ops or #paint_ops == 0 then return nil end
+    
+    if #paint_ops > 16 then
+        error("paint: maximum 16 ops supported per element")
+    end
+    
+    local count = #paint_ops
+    local count_t = terralib.constant(int32, count)
+    
+    local op_init_list = terralib.newlist()
+    for i, op in ipairs(paint_ops) do
+        local idx = i - 1
+        local idx_t = terralib.constant(int32, idx)
+        local color = op.color or { r = 0, g = 0, b = 0, a = 1 }
+        local kind_t = terralib.constant(uint8, op.kind or ui.PAINT_OP_FILL)
+        local color_r = terralib.constant(float, value_or(color.r, 0.0))
+        local color_g = terralib.constant(float, value_or(color.g, 0.0))
+        local color_b = terralib.constant(float, value_or(color.b, 0.0))
+        local color_a = terralib.constant(float, value_or(color.a, 1.0))
+        local x = terralib.constant(float, value_or(op.x, 0.0))
+        local y = terralib.constant(float, value_or(op.y, 0.0))
+        local w = terralib.constant(float, value_or(op.w, 0.0))
+        local h = terralib.constant(float, value_or(op.h, 0.0))
+        local r = terralib.constant(float, value_or(op.r, 0.0))
+        local x2 = terralib.constant(float, value_or(op.x2, 0.0))
+        local y2 = terralib.constant(float, value_or(op.y2, 0.0))
+        local width = terralib.constant(uint16, value_or(op.width, 1))
+        
+        op_init_list:insert(`(ui.PaintOp {
+            kind = [kind_t],
+            color = ui.Color { r = [color_r], g = [color_g], b = [color_b], a = [color_a] },
+            x = [x], y = [y], w = [w], h = [h], r = [r],
+            x2 = [x2], y2 = [y2], width = [width]
+        }))
+    end
+    
+    local ops_array = `arrayof(ui.PaintOp, [op_init_list])
+    
+    return quote
+        var ops = [ops_array]
+        var cfg : ui.PaintConfig
+        cfg.ops = ops
+        cfg.count = [count_t]
+        ui.AttachPaintConfig(cfg)
+    end
+end
+
 function ui.compile(node)
     local stmts = terralib.newlist()
     
@@ -326,7 +374,14 @@ function ui.compile(node)
     if node.floating then
         stmts:insert(quote ui.AttachFloatingConfig([compileFloatingConfig(node.floating)]) end)
     end
-    
+
+    if node.paint then
+        local paint_stmts = compilePaintConfig(node.paint)
+        if paint_stmts then
+            stmts:insert(paint_stmts)
+        end
+    end
+
     if node.text then
         local textStr = node.text
         local textConfig = node.textConfig

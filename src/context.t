@@ -19,6 +19,7 @@ local ClipConfigArray = array_mod.Array(config.ClipConfig)
 local CustomConfigArray = array_mod.Array(config.CustomConfig)
 local BorderConfigArray = array_mod.Array(config.BorderConfig)
 local SharedConfigArray = array_mod.Array(config.SharedConfig)
+local PaintConfigArray = array_mod.Array(config.PaintConfig)
 local RenderCommandArray = array_mod.Array(config.RenderCommand)
 local TextElementDataArray = array_mod.Array(layout.TextElementData)
 local WrappedTextLineArray = array_mod.Array(layout.WrappedTextLine)
@@ -49,7 +50,8 @@ local DecodedElementConfigs = struct {
     aspect : &config.AspectRatioConfig,
     image : &config.ImageConfig,
     custom : &config.CustomConfig,
-    shared : &config.SharedConfig
+    shared : &config.SharedConfig,
+    paint : &config.PaintConfig
 }
 
 ui.MAXFLOAT = 3.40282346638528859812e+38
@@ -82,6 +84,7 @@ ui.Context = struct {
     customConfigs : CustomConfigArray,
     borderConfigs : BorderConfigArray,
     sharedConfigs : SharedConfigArray,
+    paintConfigs : PaintConfigArray,
     wrappedTextLines : WrappedTextLineArray,
     layoutElementTreeRoots : LayoutElementTreeRootArray,
     layoutElementTreeNodeArray1 : LayoutElementTreeNodeArray,
@@ -209,6 +212,7 @@ terra ui.Context:initialize(arena: &ui.Arena, maxElements: int32) : bool
     if not self.customConfigs:allocate(maxElements, arena) then return false end
     if not self.borderConfigs:allocate(maxElements, arena) then return false end
     if not self.sharedConfigs:allocate(maxElements, arena) then return false end
+    if not self.paintConfigs:allocate(maxElements, arena) then return false end
     if not self.wrappedTextLines:allocate(maxElements * 8, arena) then return false end
     if not self.layoutElementTreeRoots:allocate(maxElements, arena) then return false end
     if not self.layoutElementTreeNodeArray1:allocate(maxElements, arena) then return false end
@@ -666,6 +670,11 @@ end
 terra ui.Context:storeAspectRatioConfig(cfg: config.AspectRatioConfig) : &config.AspectRatioConfig
     if self.maxElementsExceeded then return nil end
     return self.aspectRatioConfigs:add(cfg)
+end
+
+terra ui.Context:storePaintConfig(cfg: config.PaintConfig) : &config.PaintConfig
+    if self.maxElementsExceeded then return nil end
+    return self.paintConfigs:add(cfg)
 end
 
 terra ui.Context:attachElementConfig(cfg: config.ElementConfigUnion, cfgType: uint8) : &config.ElementConfig
@@ -1369,6 +1378,19 @@ terra ui.AttachCustomConfig(cfg: config.CustomConfig) : bool
     return ui.AttachCustomConfigForContext(ui.GetCurrentContext(), cfg)
 end
 
+terra ui.AttachPaintConfigForContext(ctx: &ui.Context, cfg: config.PaintConfig) : bool
+    if ctx == nil then return false end
+    var paintCfg = ctx:storePaintConfig(cfg)
+    if paintCfg == nil then return false end
+    var cfgUnion: config.ElementConfigUnion
+    cfgUnion.paintConfig = paintCfg
+    return ctx:attachElementConfig(cfgUnion, config.CONFIG_PAINT) ~= nil
+end
+
+terra ui.AttachPaintConfig(cfg: config.PaintConfig) : bool
+    return ui.AttachPaintConfigForContext(ui.GetCurrentContext(), cfg)
+end
+
 terra ui.GetElementId(idString: config.String) : hash.ElementId
     return hash.HashString(idString, 0)
 end
@@ -1490,6 +1512,7 @@ terra ui.Context:decodeElementConfigs(elem: &layout.LayoutElement) : DecodedElem
     out.image = nil
     out.custom = nil
     out.shared = nil
+    out.paint = nil
     if elem == nil or elem.elementConfigs.internalArray == nil then
         return out
     end
@@ -1513,6 +1536,8 @@ terra ui.Context:decodeElementConfigs(elem: &layout.LayoutElement) : DecodedElem
             out.custom = c.config.customConfig
         elseif c.configType == config.CONFIG_SHARED then
             out.shared = c.config.sharedConfig
+        elseif c.configType == config.CONFIG_PAINT then
+            out.paint = c.config.paintConfig
         end
         i = i + 1
     end
@@ -2620,7 +2645,20 @@ terra ui.Context:calculateFinalLayout()
                                         end
                                         emitRectangle = false
                                     end
-                                    
+
+                                    if decoded.paint ~= nil then
+                                        var cmd: config.RenderCommand
+                                        cmd.boundingBox = boundingBox
+                                        cmd.id = currentElement.id
+                                        cmd.commandType = config.RENDER_PAINT
+                                        cmd.zIndex = root.zIndex
+                                        cmd.renderData.paint.ops = decoded.paint.ops
+                                        cmd.renderData.paint.count = decoded.paint.count
+                                        if self.renderCommands.length < self.renderCommands.capacity then
+                                            self.renderCommands:add(cmd)
+                                        end
+                                    end
+
                                     if emitRectangle then
                                         var cmd: config.RenderCommand
                                         cmd.boundingBox = boundingBox

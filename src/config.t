@@ -72,6 +72,7 @@ ui.RENDER_IMAGE = 4
 ui.RENDER_SCISSOR_START = 5
 ui.RENDER_SCISSOR_END = 6
 ui.RENDER_CUSTOM = 7
+ui.RENDER_PAINT = 8
 
 ui.PointerState = uint8
 ui.POINTER_PRESSED_THIS_FRAME = 0
@@ -89,6 +90,7 @@ ui.CONFIG_IMAGE = 5
 ui.CONFIG_TEXT = 6
 ui.CONFIG_CUSTOM = 7
 ui.CONFIG_SHARED = 8
+ui.CONFIG_PAINT = 9
 
 ui.ErrorType = uint8
 ui.ERROR_TYPE_TEXT_MEASUREMENT_FUNCTION_NOT_PROVIDED = 0
@@ -245,6 +247,36 @@ ui.SharedConfig = struct {
 }
 
 -- ============================================
+-- PAINT OPS
+-- ============================================
+
+ui.PaintOpKind = uint8
+ui.PAINT_OP_FILL = 0
+ui.PAINT_OP_STROKE = 1
+ui.PAINT_OP_RECT = 2
+ui.PAINT_OP_ROUND_RECT = 3
+ui.PAINT_OP_CIRCLE = 4
+ui.PAINT_OP_LINE = 5
+
+ui.PaintOp = struct {
+    kind : ui.PaintOpKind,
+    color : ui.Color,
+    x : float,
+    y : float,
+    w : float,
+    h : float,
+    r : float,
+    x2 : float,
+    y2 : float,
+    width : uint16
+}
+
+ui.PaintConfig = struct {
+    ops : &ui.PaintOp,
+    count : uint32
+}
+
+-- ============================================
 -- RENDER DATA
 -- ============================================
 
@@ -285,13 +317,19 @@ ui.BorderRenderData = struct {
     width : ui.BorderWidth
 }
 
+ui.PaintRenderData = struct {
+    ops : &ui.PaintOp,
+    count : uint32
+}
+
 ui.RenderData = struct {
     rectangle : ui.RectangleRenderData,
     text : ui.TextRenderData,
     image : ui.ImageRenderData,
     custom : ui.CustomRenderData,
     border : ui.BorderRenderData,
-    clip : ui.ClipRenderData
+    clip : ui.ClipRenderData,
+    paint : ui.PaintRenderData
 }
 
 ui.RenderCommand = struct {
@@ -343,7 +381,8 @@ ui.ElementConfigUnion = struct {
     customConfig : &ui.CustomConfig,
     clipConfig : &ui.ClipConfig,
     borderConfig : &ui.BorderConfig,
-    sharedConfig : &ui.SharedConfig
+    sharedConfig : &ui.SharedConfig,
+    paintConfig : &ui.PaintConfig
 }
 
 ui.ElementConfig = struct {
