@@ -338,8 +338,10 @@ end
 
 local runtime_states = {
     hover = true,
-    active = true,
-    focus = true,
+    active = false,
+    disabled = false,
+    focus = false,
+    selected = false,
 }
 
 local function merge_state_overlay(base_node, state_node)
@@ -367,7 +369,10 @@ end
 local function validate_runtime_states(node)
     if not node.states then return end
     
-    for state_name, _ in pairs(node.states) do
+    for state_name, state_node in pairs(node.states) do
+        if runtime_states[state_name] == false then
+            error("argile: state '" .. state_name .. "' is not yet implemented")
+        end
         if runtime_states[state_name] then
             if not node.id then
                 error("argile: state '" .. state_name .. "' requires element to have an id")
@@ -375,6 +380,9 @@ local function validate_runtime_states(node)
             if type(node.id) ~= "string" then
                 error("argile: state '" .. state_name .. "' currently requires a string id")
             end
+        end
+        if state_name == "hover" and state_node.textConfig then
+            error("argile: 'when hover' with typography is not yet implemented")
         end
     end
 end
