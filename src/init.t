@@ -263,7 +263,17 @@ ui.MAXFLOAT = context.MAXFLOAT
 
 -- Stable C/FFI-facing function surface. This is intentionally narrower
 -- than the full Terra `ui` table, which still exposes internal helpers.
+--
+-- Grouped by domain:
+--   1. Context/Init
+--   2. Layout/Frame
+--   3. Element Construction
+--   4. Text
+--   5. Input/State
+--   6. Render Output
+--   7. Hashing/Id
 ui.capi = {
+    -- Context/Init
     GetApiVersion = ui.GetApiVersion,
     GetContextSize = ui.GetContextSize,
     CreateArenaWithCapacityAndMemory = ui.CreateArenaWithCapacityAndMemory,
@@ -287,23 +297,28 @@ ui.capi = {
     SetDebugModeEnabled = ui.SetDebugModeEnabled,
     IsDebugModeEnabled = ui.IsDebugModeEnabled,
     SetExternalScrollHandlingEnabled = ui.SetExternalScrollHandlingEnabled,
+
+    -- Layout/Frame
     BeginLayout = ui.BeginLayout,
     BeginLayoutForContext = ui.BeginLayoutForContext,
+    FinalizeLayout = ui.FinalizeLayout,
+    FinalizeLayoutForContext = ui.FinalizeLayoutForContext,
+    UpdateScrollContainers = ui.UpdateScrollContainers,
+    UpdateScrollContainersForContext = ui.UpdateScrollContainersForContext,
+    GetScrollOffset = ui.GetScrollOffset,
+    GetScrollContainerData = ui.GetScrollContainerData,
+
+    -- Element Construction
     OpenElement = ui.OpenElement,
     OpenElementForContext = ui.OpenElementForContext,
     OpenElementWithId = ui.OpenElementWithId,
     OpenElementWithIdForContext = ui.OpenElementWithIdForContext,
-    ConfigureOpenElementBox = ui.ConfigureOpenElementBox,
-    ConfigureOpenElementBoxForContext = ui.ConfigureOpenElementBoxForContext,
-    OpenStyledElement = ui.OpenStyledElement,
-    OpenStyledElementForContext = ui.OpenStyledElementForContext,
-    OpenTextElement = ui.OpenTextElement,
-    OpenTextElementForContext = ui.OpenTextElementForContext,
-    OpenTextElementWithLength = ui.OpenTextElementWithLength,
-    OpenTextElementWithLengthForContext = ui.OpenTextElementWithLengthForContext,
-    StringFromChars = ui.StringFromChars,
     OpenElementWithIdChars = ui.OpenElementWithIdChars,
     OpenElementWithIdCharsForContext = ui.OpenElementWithIdCharsForContext,
+    OpenStyledElement = ui.OpenStyledElement,
+    OpenStyledElementForContext = ui.OpenStyledElementForContext,
+    ConfigureOpenElementBox = ui.ConfigureOpenElementBox,
+    ConfigureOpenElementBoxForContext = ui.ConfigureOpenElementBoxForContext,
     SetOpenElementLayoutConfig = ui.SetOpenElementLayoutConfig,
     SetOpenElementLayoutConfigForContext = ui.SetOpenElementLayoutConfigForContext,
     AttachSharedConfig = ui.AttachSharedConfig,
@@ -324,25 +339,32 @@ ui.capi = {
     AttachPaintConfigForContext = ui.AttachPaintConfigForContext,
     CloseElement = ui.CloseElement,
     CloseElementForContext = ui.CloseElementForContext,
-    FinalizeLayout = ui.FinalizeLayout,
-    FinalizeLayoutForContext = ui.FinalizeLayoutForContext,
-    GetRenderCommandCount = ui.GetRenderCommandCount,
-    GetRenderCommandCountForContext = ui.GetRenderCommandCountForContext,
-    GetRenderCommandBuffer = ui.GetRenderCommandBuffer,
-    GetRenderCommandBufferForContext = ui.GetRenderCommandBufferForContext,
-    GetRenderCommandAt = ui.GetRenderCommandAt,
-    GetRenderCommandAtForContext = ui.GetRenderCommandAtForContext,
+    GetElementData = ui.GetElementData,
+
+    -- Text
+    OpenTextElement = ui.OpenTextElement,
+    OpenTextElementForContext = ui.OpenTextElementForContext,
+    OpenTextElementWithLength = ui.OpenTextElementWithLength,
+    OpenTextElementWithLengthForContext = ui.OpenTextElementWithLengthForContext,
+    StringFromChars = ui.StringFromChars,
+
+    -- Input/State
     SetPointerState = ui.SetPointerState,
     SetPointerStateForContext = ui.SetPointerStateForContext,
     Hovered = ui.Hovered,
     PointerOver = ui.PointerOver,
     OnHoverCurrent = ui.OnHoverCurrent,
     OnHover = ui.OnHover,
-    UpdateScrollContainers = ui.UpdateScrollContainers,
-    UpdateScrollContainersForContext = ui.UpdateScrollContainersForContext,
-    GetScrollOffset = ui.GetScrollOffset,
-    GetScrollContainerData = ui.GetScrollContainerData,
-    GetElementData = ui.GetElementData,
+
+    -- Render Output
+    GetRenderCommandCount = ui.GetRenderCommandCount,
+    GetRenderCommandCountForContext = ui.GetRenderCommandCountForContext,
+    GetRenderCommandBuffer = ui.GetRenderCommandBuffer,
+    GetRenderCommandBufferForContext = ui.GetRenderCommandBufferForContext,
+    GetRenderCommandAt = ui.GetRenderCommandAt,
+    GetRenderCommandAtForContext = ui.GetRenderCommandAtForContext,
+
+    -- Hashing/Id
     GetElementId = ui.GetElementId,
     GetElementIdWithIndex = ui.GetElementIdWithIndex,
     GetElementIdFromChars = ui.GetElementIdFromChars,
