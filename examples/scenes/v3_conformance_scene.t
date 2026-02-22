@@ -7,11 +7,11 @@ local hash = require("src.hash")
 import "src/lang.argile_v3"
 
 -- Simple text measurement for conformance
-terra conformance_measure_text(text: ui.StringSlice, textCfg: &ui.TextConfig, _userData: &opaque) : ui.Dimensions
-    var out: ui.Dimensions
+-- New FFI-friendly signature: out pointer + int32 return
+terra conformance_measure_text(text: &ui.StringSlice, textCfg: &ui.TextConfig, _userData: &opaque, out: &ui.Dimensions) : int32
     out.width = [float](text.length * 8)
     out.height = 16.0
-    return out
+    return 1  -- success
 end
 
 -- Conformance scene with all command types

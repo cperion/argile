@@ -11,15 +11,15 @@ local capi = ui.capi
 local capi_get_render_command_at_for_context = capi.GetRenderCommandAtForContext
 local capi_get_render_command_count_for_context = capi.GetRenderCommandCountForContext
 
-terra v3_render_measure_text(text: ui.StringSlice, textCfg: &ui.TextConfig, _userData: &opaque) : ui.Dimensions
-    var out: ui.Dimensions
+-- New FFI-friendly signature: out pointer + int32 return
+terra v3_render_measure_text(text: &ui.StringSlice, textCfg: &ui.TextConfig, _userData: &opaque, out: &ui.Dimensions) : int32
     out.width = [float](text.length * 8)
     if textCfg ~= nil and textCfg.lineHeight > 0 then
         out.height = [float](textCfg.lineHeight)
     else
         out.height = 16.0
     end
-    return out
+    return 1  -- success
 end
 
 theme v3_rt_theme

@@ -54,41 +54,52 @@ local footer_id
 -- ============================================================================
 -- Text Measurement Callback
 -- ============================================================================
--- The callback must be stored in a local upvalue to prevent GC collection
--- This is critical for stability - callbacks must remain valid for the lifetime
+-- The callback must be stored to prevent GC collection
+-- New FFI-friendly signature: takes out pointer, returns int32 success
+-- Pattern: int32_t (*)(struct StringSlice*, struct TextConfig*, void*, struct Dimensions*)
 
-local text_measure_callback = nil
+-- Define callback at module level (not inside function) for proper LuaJIT FFI casting
+local text_measure_callback = ffi.cast(
+    "int32_t (*)(struct StringSlice*, struct TextConfig*, void*, struct Dimensions*)",
+    function(text_slice_ptr, text_config, user_data, out_dims)
+        -- text_slice_ptr is a pointer to StringSlice
+        local text_slice = text_slice_ptr[0]
+        
+        -- Convert StringSlice to Lua string
+        local text = ""
+        if text_slice.chars ~= nil and text_slice.length > 0 then
+            text = ffi.string(text_slice.chars, tonumber(text_slice.length))
+        end
+        
+        -- Get font size from config or default
+        local font_size = 16
+        if text_config ~= nil then
+            font_size = tonumber(text_config.fontSize) or 16
+        end
+        
+        -- Use Love2D's font for measurement
+        local current_font = love.graphics.getFont()
+        if current_font then
+            local w = current_font:getWidth(text)
+            local h = current_font:getHeight()
+            -- Scale based on font size ratio
+            local scale = font_size / current_font:getHeight()
+            out_dims.width = w * scale
+            out_dims.height = h * scale
+        else
+            -- Fallback approximation
+            out_dims.width = #text * font_size * 0.6
+            out_dims.height = font_size * 1.2
+        end
+        
+        -- Return 1 for success
+        return 1
+    end
+)
 
 local function init_text_measure_callback()
-    text_measure_callback = ffi.cast(
-        "struct Dimensions (*)(struct StringSlice, struct TextConfig*, void*)",
-        function(text_slice, text_config, user_data)
-            -- Convert StringSlice to Lua string
-            local text = ""
-            if text_slice.chars ~= nil and text_slice.length > 0 then
-                text = ffi.string(text_slice.chars, tonumber(text_slice.length))
-            end
-            
-            -- Get font size from config or default
-            local font_size = 16
-            if text_config ~= nil then
-                font_size = tonumber(text_config.fontSize) or 16
-            end
-            
-            -- Use Love2D's font for measurement
-            local current_font = love.graphics.getFont()
-            if current_font then
-                local w = current_font:getWidth(text)
-                local h = current_font:getHeight()
-                -- Scale based on font size ratio
-                local scale = font_size / current_font:getHeight()
-                return ffi.new("struct Dimensions", { width = w * scale, height = h * scale })
-            else
-                -- Fallback approximation
-                return ffi.new("struct Dimensions", { width = #text * font_size * 0.6, height = font_size * 1.2 })
-            end
-        end
-    )
+    -- Callback is already initialized at module load
+    -- This function exists for API compatibility
 end
 
 -- ============================================================================

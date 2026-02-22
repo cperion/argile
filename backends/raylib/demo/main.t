@@ -81,6 +81,7 @@ end
 -- ============================================================================
 -- Text Measurement Callback
 -- ============================================================================
+-- New FFI-friendly signature: int32_t (*)(StringSlice*, TextConfig*, void*, Dimensions*)
 
 local text_measure_callback = nil
 local default_font = nil
@@ -89,8 +90,9 @@ local function init_text_measure_callback()
     default_font = raylib.GetFontDefault()
     
     text_measure_callback = ffi.cast(
-        "struct Dimensions (*)(struct StringSlice, struct TextConfig*, void*)",
-        function(text_slice, text_config, user_data)
+        "int32_t (*)(struct StringSlice*, struct TextConfig*, void*, struct Dimensions*)",
+        function(text_slice_ptr, text_config, user_data, out_dims)
+            local text_slice = text_slice_ptr[0]
             local text = ""
             if text_slice.chars ~= nil and text_slice.length > 0 then
                 text = ffi.string(text_slice.chars, tonumber(text_slice.length))
@@ -102,10 +104,9 @@ local function init_text_measure_callback()
             end
             
             local m = raylib.MeasureTextEx(default_font, text, font_size, 0)
-            return ffi.new("struct Dimensions", { 
-                width = m.x, 
-                height = m.y 
-            })
+            out_dims.width = m.x
+            out_dims.height = m.y
+            return 1  -- success
         end
     )
 end

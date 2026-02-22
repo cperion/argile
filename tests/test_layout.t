@@ -624,16 +624,16 @@ print("\n=== Advanced Features Test ===")
 
 local measureTextCalls = global(int32, 0)
 
-terra mock_measure_text(text: ui.StringSlice, textCfg: &ui.TextConfig, userData: &opaque) : ui.Dimensions
+-- New FFI-friendly signature: out pointer + int32 return
+terra mock_measure_text(text: &ui.StringSlice, textCfg: &ui.TextConfig, userData: &opaque, out: &ui.Dimensions) : int32
     measureTextCalls = measureTextCalls + 1
-    var out: ui.Dimensions
     out.width = [float](text.length * 8)
     if textCfg ~= nil and textCfg.lineHeight > 0 then
         out.height = [float](textCfg.lineHeight)
     else
         out.height = 16.0
     end
-    return out
+    return 1  -- success
 end
 
 terra test_measure_text_cache_hit_and_reset()
@@ -1053,23 +1053,23 @@ local hoverCallbackCount = global(int32, 0)
 local errorCallbackCount = global(int32, 0)
 local hoverCurrentCallbackCount = global(int32, 0)
 
-terra hover_callback(_id: ui.ElementId, _pointer: ui.PointerData, _userData: &opaque)
+-- New FFI-friendly callbacks using out pointers
+terra hover_callback(_id: ui.ElementId, _pointer: &ui.PointerData, _userData: &opaque)
     hoverCallbackCount = hoverCallbackCount + 1
 end
 
-terra error_callback(_err: ui.ErrorData)
+terra error_callback(_err: &ui.ErrorData)
     errorCallbackCount = errorCallbackCount + 1
 end
 
-terra hover_current_callback(_id: ui.ElementId, _pointer: ui.PointerData, _userData: &opaque)
+terra hover_current_callback(_id: ui.ElementId, _pointer: &ui.PointerData, _userData: &opaque)
     hoverCurrentCallbackCount = hoverCurrentCallbackCount + 1
 end
 
-terra query_scroll_offset_callback(_id: uint32, _userData: &opaque) : ui.Vector2
-    var out: ui.Vector2
+terra query_scroll_offset_callback(_id: uint32, _userData: &opaque, out: &ui.Vector2) : int32
     out.x = -7
     out.y = -11
-    return out
+    return 1  -- success
 end
 
 terra test_hover_and_element_data()

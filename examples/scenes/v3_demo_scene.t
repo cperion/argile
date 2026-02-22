@@ -8,15 +8,15 @@ local config = require("src.config")
 import "src/lang.argile_v3"
 
 -- Demo-scene specific text measurement (8px per char fallback)
-terra demo_measure_text(text: ui.StringSlice, textCfg: &ui.TextConfig, _userData: &opaque) : ui.Dimensions
-    var out: ui.Dimensions
+-- New FFI-friendly signature: out pointer + int32 return
+terra demo_measure_text(text: &ui.StringSlice, textCfg: &ui.TextConfig, _userData: &opaque, out: &ui.Dimensions) : int32
     out.width = [float](text.length * 8)
     if textCfg ~= nil and textCfg.lineHeight > 0 then
         out.height = [float](textCfg.lineHeight)
     else
         out.height = 16.0
     end
-    return out
+    return 1  -- success
 end
 
 -- Theme definition for the demo card

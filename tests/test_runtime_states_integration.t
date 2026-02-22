@@ -7,15 +7,15 @@ local C = terralib.includecstring [[
 local ui = require("src.builder")
 import "src/lang.argile"
 
-terra state_test_measure_text(text: ui.StringSlice, textCfg: &ui.TextConfig, _userData: &opaque) : ui.Dimensions
-    var out: ui.Dimensions
+-- New FFI-friendly signature: out pointer + int32 return
+terra state_test_measure_text(text: &ui.StringSlice, textCfg: &ui.TextConfig, _userData: &opaque, out: &ui.Dimensions) : int32
     out.width = [float](text.length * 8)
     if textCfg ~= nil and textCfg.lineHeight > 0 then
         out.height = [float](textCfg.lineHeight)
     else
         out.height = 16.0
     end
-    return out
+    return 1  -- success
 end
 
 local compiled_state_scene = argile el

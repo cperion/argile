@@ -33,10 +33,12 @@ local MeasureTextCacheItemArray = array_mod.Array(layout.MeasureTextCacheItem)
 local UInt32Array = array_mod.Array(uint32)
 local BoundingBoxArray = array_mod.Array(config.BoundingBox)
 local BoolArray = array_mod.Array(bool)
-local MeasureTextFnType = { string_mod.StringSlice, &config.TextConfig, &opaque } -> config.Dimensions
-local QueryScrollOffsetFnType = { uint32, &opaque } -> config.Vector2
-local HoverCallbackFnType = { hash.ElementId, config.PointerData, &opaque } -> {}
-local ErrorHandlerFnType = { config.ErrorData } -> {}
+-- FFI-friendly callback types using out pointers instead of struct-by-value
+-- This ensures portability across LuaJIT FFI, Python ctypes, etc.
+local MeasureTextFnType = { &string_mod.StringSlice, &config.TextConfig, &opaque, &config.Dimensions } -> int32
+local QueryScrollOffsetFnType = { uint32, &opaque, &config.Vector2 } -> int32
+local HoverCallbackFnType = { hash.ElementId, &config.PointerData, &opaque } -> {}
+local ErrorHandlerFnType = { &config.ErrorData } -> {}
 local HoverBinding = struct {
     elementId : uint32,
     callback : HoverCallbackFnType,
@@ -539,7 +541,13 @@ terra ui.Context:measureTextCached(text: &config.String, textCfg: &config.TextCo
     oneChar.length = 1
     oneChar.chars = " "
     oneChar.baseChars = " "
-    var spaceWidth = measureTextFn(oneChar, textCfg, measureTextUserData).width
+    var spaceWidth: float = 0
+    var spaceDims: config.Dimensions
+    spaceDims.width = 0
+    spaceDims.height = 0
+    if measureTextFn(&oneChar, textCfg, measureTextUserData, &spaceDims) ~= 0 then
+        spaceWidth = spaceDims.width
+    end
 
     var start: int32 = 0
     var e: int32 = 0
@@ -569,7 +577,10 @@ terra ui.Context:measureTextCached(text: &config.String, textCfg: &config.TextCo
                 s.length = length
                 s.chars = &text.chars[start]
                 s.baseChars = text.chars
-                dimensions = measureTextFn(s, textCfg, measureTextUserData)
+                if measureTextFn(&s, textCfg, measureTextUserData, &dimensions) == 0 then
+                    dimensions.width = 0
+                    dimensions.height = 0
+                end
             end
             if dimensions.width > measured.minWidth then
                 measured.minWidth = dimensions.width
@@ -619,7 +630,13 @@ terra ui.Context:measureTextCached(text: &config.String, textCfg: &config.TextCo
         s.length = e - start
         s.chars = &text.chars[start]
         s.baseChars = text.chars
-        var dimensions = measureTextFn(s, textCfg, measureTextUserData)
+        var dimensions: config.Dimensions
+        dimensions.width = 0
+        dimensions.height = 0
+        if measureTextFn(&s, textCfg, measureTextUserData, &dimensions) == 0 then
+            dimensions.width = 0
+            dimensions.height = 0
+        end
         var w: layout.MeasuredWord
         w.startOffset = start
         w.length = e - start
@@ -1221,8 +1238,11 @@ terra ui.Context:openTextElement(text: config.String, textConfig: &config.TextCo
                     slice.length = text.length
                     slice.chars = text.chars
                     slice.baseChars = text.chars
-                    textData.preferredDimensions = measureTextFn(slice, textConfig, measureTextUserData)
-                    textMinWidth = textData.preferredDimensions.width
+                    textData.preferredDimensions.width = 0
+                    textData.preferredDimensions.height = 0
+                    if measureTextFn(&slice, textConfig, measureTextUserData, &textData.preferredDimensions) ~= 0 then
+                        textMinWidth = textData.preferredDimensions.width
+                    end
                 end
 
                 var wrappedLine: layout.WrappedTextLine
@@ -1470,7 +1490,7 @@ terra ui.ReportError(errorType: uint8, errorText: config.String)
         d.errorType = errorType
         d.errorText = errorText
         d.userData = ui.errorHandlerUserData
-        ui.errorHandlerFunction(d)
+        ui.errorHandlerFunction(&d)
     end
 end
 
@@ -1904,7 +1924,13 @@ terra ui.Context:wrapTextElements()
                                 measureTextFn = ui.measureTextFunction
                                 measureTextUserData = ui.measureTextUserData
                             end
-                            var spaceWidth = measureTextFn(oneChar, textCfg, measureTextUserData).width
+                            var spaceWidth: float = 0
+                            var spaceDims: config.Dimensions
+                            spaceDims.width = 0
+                            spaceDims.height = 0
+                            if measureTextFn(&oneChar, textCfg, measureTextUserData, &spaceDims) ~= 0 then
+                                spaceWidth = spaceDims.width
+                            end
 
                             var wordIndex = measureTextCacheItem.measuredWordsStartIndex
                             while wordIndex ~= -1 do
@@ -2661,7 +2687,14 @@ terra ui.Context:calculateFinalLayout()
                                             scrollData.contentSize = self:computeContentSize(currentElement, layoutCfg)
                                             scrollData.openThisFrame = true
                                             if ui.queryScrollOffsetFunction ~= nil then
-                                                scrollData.scrollPosition = ui.queryScrollOffsetFunction(currentElement.id, ui.queryScrollOffsetUserData)
+                                                var outOffset: config.Vector2
+                                                outOffset.x = 0
+                                                outOffset.y = 0
+                                                if ui.queryScrollOffsetFunction(currentElement.id, ui.queryScrollOffsetUserData, &outOffset) ~= 0 then
+                                                    scrollData.scrollPosition = outOffset
+                                                else
+                                                    scrollData.scrollPosition = decoded.clip.childOffset
+                                                end
                                             else
                                                 scrollData.scrollPosition = decoded.clip.childOffset
                                             end
@@ -3108,7 +3141,7 @@ terra ui.SetPointerStateForContext(ctx: &ui.Context, position: config.Vector2, p
                                 id.stringId.isStaticallyAllocated = false
                                 id.stringId.length = 0
                                 id.stringId.chars = nil
-                                hb.callback(id, ctx.pointerInfo, hb.userData)
+                                hb.callback(id, &ctx.pointerInfo, hb.userData)
                             end
                             h = h + 1
                         end
@@ -3292,13 +3325,13 @@ terra ui.OnHover(id: hash.ElementId, callback: HoverCallbackFnType, userData: &o
     if ui.PointerOver(id) then
         var ctx = ui.GetCurrentContext()
         if ctx ~= nil then
-            callback(id, ctx.pointerInfo, userData)
+            callback(id, &ctx.pointerInfo, userData)
         else
             var p: config.PointerData
             p.position.x = 0
             p.position.y = 0
             p.state = config.POINTER_RELEASED
-            callback(id, p, userData)
+            callback(id, &p, userData)
         end
     end
 end

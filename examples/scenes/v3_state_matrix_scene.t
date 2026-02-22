@@ -6,11 +6,11 @@ local ui = require("src.builder")
 local hash = require("src.hash")
 import "src/lang.argile_v3"
 
-terra state_measure_text(text: ui.StringSlice, textCfg: &ui.TextConfig, _userData: &opaque) : ui.Dimensions
-    var out: ui.Dimensions
+-- New FFI-friendly signature: out pointer + int32 return
+terra state_measure_text(text: &ui.StringSlice, textCfg: &ui.TextConfig, _userData: &opaque, out: &ui.Dimensions) : int32
     out.width = [float](text.length * 8)
     out.height = 16.0
-    return out
+    return 1  -- success
 end
 
 -- State matrix scene with all runtime states

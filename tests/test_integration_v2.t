@@ -21,15 +21,15 @@ local capi_attach_paint_config_for_context = capi.AttachPaintConfigForContext
 local capi_open_text_element_with_length_for_context = capi.OpenTextElementWithLengthForContext
 local capi_close_element_for_context = capi.CloseElementForContext
 
-terra integration_mock_measure_text(text: ui.StringSlice, textCfg: &ui.TextConfig, _userData: &opaque) : ui.Dimensions
-    var out: ui.Dimensions
+-- New FFI-friendly signature: out pointer + int32 return
+terra integration_mock_measure_text(text: &ui.StringSlice, textCfg: &ui.TextConfig, _userData: &opaque, out: &ui.Dimensions) : int32
     out.width = [float](text.length * 8)
     if textCfg ~= nil and textCfg.lineHeight > 0 then
         out.height = [float](textCfg.lineHeight)
     else
         out.height = 16.0
     end
-    return out
+    return 1  -- success
 end
 
 local compiled_dsl_scene = argile el
