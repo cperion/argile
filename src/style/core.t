@@ -46,6 +46,54 @@ local function deep_merge(a, b)
     return result
 end
 
+local function coerce_enum(value, map, fallback)
+    if value == nil then
+        return fallback
+    end
+    if map[value] ~= nil then
+        return map[value]
+    end
+    if type(value) == "string" then
+        local key = value:lower():gsub("%s+", "_")
+        if map[key] ~= nil then
+            return map[key]
+        end
+    end
+    return value
+end
+
+local function arg_or(args, index, default)
+    local v = args[index]
+    if v == nil then return default end
+    return v
+end
+
+local layout_enum_cache = nil
+local function get_layout_enums()
+    if layout_enum_cache ~= nil then
+        return layout_enum_cache
+    end
+    local ui = require("src.init")
+    layout_enum_cache = {
+        ui = ui,
+        layout_dir = {
+            left_to_right = ui.LEFT_TO_RIGHT,
+            top_to_bottom = ui.TOP_TO_BOTTOM,
+        },
+        align_x = {
+            left = ui.ALIGN_X_LEFT,
+            right = ui.ALIGN_X_RIGHT,
+            center = ui.ALIGN_X_CENTER,
+        },
+        align_y = {
+            top = ui.ALIGN_Y_TOP,
+            bottom = ui.ALIGN_Y_BOTTOM,
+            center = ui.ALIGN_Y_CENTER,
+        },
+    }
+    return layout_enum_cache
+end
+
 style.StylePatch = {}
 style.StylePatch.__index = style.StylePatch
 
@@ -254,6 +302,80 @@ function style.apply_style_ops(patch, ops)
         end
     end
     
+    return result
+end
+
+function style.apply_layout_ops(patch, ops)
+    if not ops then return patch end
+    local result = style.merge_patch(nil, patch)
+    result.layout = result.layout or {}
+
+    local enums = get_layout_enums()
+    local ui = enums.ui
+    local cfg = result.layout
+
+    for _, op in ipairs(ops) do
+        local n = op.name
+        local args = op.args or {}
+
+        if n == "width_fit" then
+            cfg.widthType = ui.SIZING_FIT
+        elseif n == "width_grow" then
+            cfg.widthType = ui.SIZING_GROW
+        elseif n == "width_fixed" then
+            local v = arg_or(args, 1, 0.0)
+            local vmax = arg_or(args, 2, v)
+            cfg.widthType = ui.SIZING_FIXED
+            cfg.minWidth = v
+            cfg.maxWidth = vmax
+        elseif n == "width_percent" then
+            cfg.widthType = ui.SIZING_PERCENT
+            cfg.widthPercent = arg_or(args, 1, 0.0)
+        elseif n == "height_fit" then
+            cfg.heightType = ui.SIZING_FIT
+        elseif n == "height_grow" then
+            cfg.heightType = ui.SIZING_GROW
+        elseif n == "height_fixed" then
+            local v = arg_or(args, 1, 0.0)
+            local vmax = arg_or(args, 2, v)
+            cfg.heightType = ui.SIZING_FIXED
+            cfg.minHeight = v
+            cfg.maxHeight = vmax
+        elseif n == "height_percent" then
+            cfg.heightType = ui.SIZING_PERCENT
+            cfg.heightPercent = arg_or(args, 1, 0.0)
+        elseif n == "min_width" then
+            cfg.minWidth = arg_or(args, 1, 0.0)
+        elseif n == "max_width" then
+            cfg.maxWidth = arg_or(args, 1, ui.MAXFLOAT)
+        elseif n == "min_height" then
+            cfg.minHeight = arg_or(args, 1, 0.0)
+        elseif n == "max_height" then
+            cfg.maxHeight = arg_or(args, 1, ui.MAXFLOAT)
+        elseif n == "padding" then
+            local p = arg_or(args, 1, 0)
+            cfg.paddingLeft = p
+            cfg.paddingRight = p
+            cfg.paddingTop = p
+            cfg.paddingBottom = p
+        elseif n == "padding4" then
+            cfg.paddingLeft = arg_or(args, 1, 0)
+            cfg.paddingRight = arg_or(args, 2, 0)
+            cfg.paddingTop = arg_or(args, 3, 0)
+            cfg.paddingBottom = arg_or(args, 4, 0)
+        elseif n == "gap" then
+            cfg.childGap = arg_or(args, 1, 0)
+        elseif n == "dir" then
+            cfg.layoutDir = coerce_enum(arg_or(args, 1, ui.LEFT_TO_RIGHT), enums.layout_dir, ui.LEFT_TO_RIGHT)
+        elseif n == "align_x" then
+            cfg.alignX = coerce_enum(arg_or(args, 1, ui.ALIGN_X_LEFT), enums.align_x, ui.ALIGN_X_LEFT)
+        elseif n == "align_y" then
+            cfg.alignY = coerce_enum(arg_or(args, 1, ui.ALIGN_Y_TOP), enums.align_y, ui.ALIGN_Y_TOP)
+        else
+            error("argile layout: unknown operation '" .. tostring(n) .. "'")
+        end
+    end
+
     return result
 end
 
