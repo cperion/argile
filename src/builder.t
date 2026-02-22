@@ -360,10 +360,18 @@ end
 
 local runtime_states = {
     hover = true,
-    active = false,
-    disabled = false,
-    focus = false,
-    selected = false,
+    active = true,
+    disabled = true,
+    focus = true,
+    selected = true,
+}
+
+local runtime_state_order = {
+    "selected",
+    "focus",
+    "hover",
+    "active",
+    "disabled",
 }
 
 local function merge_state_overlay(base_node, state_node)
@@ -392,30 +400,128 @@ local function validate_runtime_states(node)
     if not node.states then return end
     
     for state_name, state_node in pairs(node.states) do
-        if runtime_states[state_name] == false then
-            error("argile: state '" .. state_name .. "' is not yet implemented")
+        if runtime_states[state_name] == nil then
+            error("argile: unknown state '" .. tostring(state_name) .. "'")
         end
-        if runtime_states[state_name] then
-            if not node.id then
-                error("argile: state '" .. state_name .. "' requires element to have an id")
-            end
-            if type(node.id) ~= "string" then
-                error("argile: state '" .. state_name .. "' currently requires a string id")
-            end
+        if not node.id then
+            error("argile: state '" .. state_name .. "' requires element to have an id")
         end
-        if state_name == "hover" and state_node.textConfig then
-            error("argile: 'when hover' with typography is not yet implemented")
+        if type(node.id) ~= "string" then
+            error("argile: state '" .. state_name .. "' currently requires a string id")
         end
     end
+end
+
+local function collect_present_runtime_states(node)
+    local names = {}
+    if not node.states then return names end
+    for _, state_name in ipairs(runtime_state_order) do
+        if node.states[state_name] ~= nil then
+            names[#names + 1] = state_name
+        end
+    end
+    return names
+end
+
+local function mask_has_bit(mask, bit)
+    local span = bit * 2
+    return (mask % span) >= bit
+end
+
+local function merge_states_for_mask(base_node, state_names, mask)
+    local merged = deep_copy(base_node)
+    if mask == 0 then
+        return merged
+    end
+    for i, state_name in ipairs(state_names) do
+        local bit = 2 ^ (i - 1)
+        if mask_has_bit(mask, bit) then
+            merged = merge_state_overlay(merged, base_node.states[state_name])
+        end
+    end
+    return merged
+end
+
+local function build_state_combo_table(node, state_names)
+    local combo_count = 2 ^ #state_names
+    local combos = {}
+    for mask = 0, combo_count - 1 do
+        local merged = merge_states_for_mask(node, state_names, mask)
+        combos[mask] = {
+            node = merged,
+            shared_cfg = merged.shared and compileSharedConfig(merged.shared) or nil,
+            border_cfg = merged.border and compileBorderConfig(merged.border) or nil,
+            paint_stmt = merged.paint and compilePaintConfig(merged.paint) or nil,
+            text_cfg_expr = merged.textConfig and compileTextConfig(merged.textConfig) or nil,
+        }
+    end
+    return combos, combo_count
+end
+
+local function state_condition_expr(state_name, elem_id_var)
+    if state_name == "hover" then
+        return `ui.PointerOver([elem_id_var])
+    elseif state_name == "active" then
+        return `ui.ElementActive([elem_id_var])
+    elseif state_name == "focus" then
+        return `ui.ElementFocused([elem_id_var])
+    elseif state_name == "selected" then
+        return `ui.ElementSelected([elem_id_var])
+    elseif state_name == "disabled" then
+        return `ui.ElementDisabled([elem_id_var])
+    end
+    error("argile: unsupported runtime state condition '" .. tostring(state_name) .. "'")
+end
+
+local function emit_state_mask_compute(mask_var, state_names, elem_id_var)
+    local stmts = terralib.newlist()
+    local zero_t = terralib.constant(uint8, 0)
+    stmts:insert(quote
+        var [mask_var] = [zero_t]
+    end)
+    for i, state_name in ipairs(state_names) do
+        local bit_t = terralib.constant(uint8, 2 ^ (i - 1))
+        local cond = state_condition_expr(state_name, elem_id_var)
+        stmts:insert(quote
+            if [cond] then
+                [mask_var] = [mask_var] + [bit_t]
+            end
+        end)
+    end
+    return quote [stmts] end
+end
+
+local function emit_state_mask_dispatch(mask_var, combo_count, branch_builder)
+    local stmts = terralib.newlist()
+    local has_any = false
+    for mask = 0, combo_count - 1 do
+        local branch = branch_builder(mask)
+        if branch and #branch > 0 then
+            has_any = true
+            local mask_t = terralib.constant(uint8, mask)
+            stmts:insert(quote
+                if [mask_var] == [mask_t] then
+                    [branch]
+                end
+            end)
+        end
+    end
+    if not has_any then
+        return nil
+    end
+    return quote [stmts] end
 end
 
 function ui.compile(node)
     validate_runtime_states(node)
     
     local stmts = terralib.newlist()
-    
-    local has_hover = node.states and node.states.hover and node.id
-    local hover_node = has_hover and merge_state_overlay(node, node.states.hover)
+
+    local runtime_state_names = collect_present_runtime_states(node)
+    local has_runtime_state_overlays = #runtime_state_names > 0 and node.id and type(node.id) == "string"
+    local state_mask_var = nil
+    local state_combos = nil
+    local state_combo_count = 0
     
     local elem_id_var = nil
     if node.id then
@@ -440,38 +546,25 @@ function ui.compile(node)
     if node.layout then
         stmts:insert(quote ui.SetOpenElementLayoutConfig([compileLayoutConfig(node.layout)]) end)
     end
-    
-    if has_hover then
-        local base_shared = node.shared and compileSharedConfig(node.shared)
-        local hover_shared = hover_node.shared and compileSharedConfig(hover_node.shared)
-        local base_border = node.border and compileBorderConfig(node.border)
-        local hover_border = hover_node.border and compileBorderConfig(hover_node.border)
-        
-        local hover_branch = terralib.newlist()
-        local base_branch = terralib.newlist()
-        
-        if hover_shared then
-            hover_branch:insert(quote ui.AttachSharedConfig([hover_shared]) end)
-        end
-        if hover_border then
-            hover_branch:insert(quote ui.AttachBorderConfig([hover_border]) end)
-        end
-        
-        if base_shared then
-            base_branch:insert(quote ui.AttachSharedConfig([base_shared]) end)
-        end
-        if base_border then
-            base_branch:insert(quote ui.AttachBorderConfig([base_border]) end)
-        end
-        
-        if #hover_branch > 0 or #base_branch > 0 then
-            stmts:insert(quote
-                if ui.PointerOver([elem_id_var]) then
-                    [hover_branch]
-                else
-                    [base_branch]
-                end
-            end)
+
+    if has_runtime_state_overlays then
+        state_combos, state_combo_count = build_state_combo_table(node, runtime_state_names)
+        state_mask_var = symbol(uint8, "state_mask")
+        stmts:insert(emit_state_mask_compute(state_mask_var, runtime_state_names, elem_id_var))
+
+        local visual_dispatch = emit_state_mask_dispatch(state_mask_var, state_combo_count, function(mask)
+            local combo = state_combos[mask]
+            local branch = terralib.newlist()
+            if combo.shared_cfg then
+                branch:insert(quote ui.AttachSharedConfig([combo.shared_cfg]) end)
+            end
+            if combo.border_cfg then
+                branch:insert(quote ui.AttachBorderConfig([combo.border_cfg]) end)
+            end
+            return branch
+        end)
+        if visual_dispatch then
+            stmts:insert(visual_dispatch)
         end
     else
         if node.shared then
@@ -502,30 +595,17 @@ function ui.compile(node)
         stmts:insert(quote ui.AttachFloatingConfig([compileFloatingConfig(node.floating)]) end)
     end
 
-    if has_hover then
-        local base_paint = node.paint and compilePaintConfig(node.paint)
-        local hover_paint = hover_node.paint and compilePaintConfig(hover_node.paint)
-        
-        if hover_paint and base_paint then
-            stmts:insert(quote
-                if ui.PointerOver([elem_id_var]) then
-                    [hover_paint]
-                else
-                    [base_paint]
-                end
-            end)
-        elseif hover_paint then
-            stmts:insert(quote
-                if ui.PointerOver([elem_id_var]) then
-                    [hover_paint]
-                end
-            end)
-        elseif base_paint then
-            stmts:insert(quote
-                if not ui.PointerOver([elem_id_var]) then
-                    [base_paint]
-                end
-            end)
+    if has_runtime_state_overlays then
+        local paint_dispatch = emit_state_mask_dispatch(state_mask_var, state_combo_count, function(mask)
+            local combo = state_combos[mask]
+            local branch = terralib.newlist()
+            if combo.paint_stmt then
+                branch:insert(combo.paint_stmt)
+            end
+            return branch
+        end)
+        if paint_dispatch then
+            stmts:insert(paint_dispatch)
         end
     elseif node.paint then
         local paint_stmts = compilePaintConfig(node.paint)
@@ -536,21 +616,43 @@ function ui.compile(node)
 
     if node.text then
         local textStr = node.text
-        local textConfig = node.textConfig
         if type(textStr) ~= "string" then
             textStr = tostring(textStr)
         end
-        
-        if textConfig then
-            stmts:insert(quote
-                var txt_cfg = [compileTextConfig(textConfig)]
-                var txt_cfg_ptr = ui.GetCurrentContext():storeTextConfig(txt_cfg)
-                ui.OpenTextElementWithLength([textStr], [#textStr], txt_cfg_ptr)
+
+        if has_runtime_state_overlays then
+            local text_dispatch = emit_state_mask_dispatch(state_mask_var, state_combo_count, function(mask)
+                local combo = state_combos[mask]
+                local branch = terralib.newlist()
+                if combo.text_cfg_expr then
+                    branch:insert(quote
+                        var txt_cfg = [combo.text_cfg_expr]
+                        var txt_cfg_ptr = ui.GetCurrentContext():storeTextConfig(txt_cfg)
+                        ui.OpenTextElementWithLength([textStr], [#textStr], txt_cfg_ptr)
+                    end)
+                else
+                    branch:insert(quote
+                        ui.OpenTextElementWithLength([textStr], [#textStr], nil)
+                    end)
+                end
+                return branch
             end)
+            if text_dispatch then
+                stmts:insert(text_dispatch)
+            end
         else
-            stmts:insert(quote
-                ui.OpenTextElementWithLength([textStr], [#textStr], nil)
-            end)
+            local textConfig = node.textConfig
+            if textConfig then
+                stmts:insert(quote
+                    var txt_cfg = [compileTextConfig(textConfig)]
+                    var txt_cfg_ptr = ui.GetCurrentContext():storeTextConfig(txt_cfg)
+                    ui.OpenTextElementWithLength([textStr], [#textStr], txt_cfg_ptr)
+                end)
+            else
+                stmts:insert(quote
+                    ui.OpenTextElementWithLength([textStr], [#textStr], nil)
+                end)
+            end
         end
     end
 

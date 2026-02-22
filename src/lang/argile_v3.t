@@ -68,6 +68,14 @@ local v3_body_keywords = {
     ["text"] = true,
 }
 
+local v3_valid_states = {
+    hover = true,
+    active = true,
+    disabled = true,
+    focus = true,
+    selected = true,
+}
+
 local layout_dir_values = {
     left_to_right = ui.LEFT_TO_RIGHT,
     top_to_bottom = ui.TOP_TO_BOTTOM,
@@ -598,11 +606,8 @@ local function parse_v3_state_block(lex)
     end
     local state_name = lex:next().value
     
-    -- V3.0 only supports hover
-    if state_name ~= "hover" then
-        -- Parse but will error at lowering
-        -- Actually, let's error here since it's clearer
-        lex:error("argile v3: state '" .. state_name .. "' is not yet implemented (only 'hover' is supported)")
+    if not v3_valid_states[state_name] then
+        lex:error("argile v3: unknown state '" .. tostring(state_name) .. "'")
     end
     
     local overlay = AST.StateOverlay(state_name, span)

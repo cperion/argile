@@ -99,6 +99,9 @@ ui.Context = struct {
     measuredWords : MeasuredWordArray,
     measuredWordsFreeList : Int32Array,
     pointerOverIds : UInt32Array,
+    focusedIds : UInt32Array,
+    selectedIds : UInt32Array,
+    disabledIds : UInt32Array,
     elementIdLookupKeys : UInt32Array,
     elementIdLookupValues : Int32Array,
     elementBoundingBoxes : BoundingBoxArray,
@@ -233,6 +236,9 @@ terra ui.Context:initialize(arena: &ui.Arena, maxElements: int32) : bool
     if not self.measuredWords:allocate(self.maxMeasureTextCacheWordCount, arena) then return false end
     if not self.measuredWordsFreeList:allocate(self.maxMeasureTextCacheWordCount, arena) then return false end
     if not self.pointerOverIds:allocate(maxElements, arena) then return false end
+    if not self.focusedIds:allocate(maxElements, arena) then return false end
+    if not self.selectedIds:allocate(maxElements, arena) then return false end
+    if not self.disabledIds:allocate(maxElements, arena) then return false end
     if not self.elementIdLookupKeys:allocate(maxElements * 4, arena) then return false end
     if not self.elementIdLookupValues:allocate(maxElements * 4, arena) then return false end
     if not self.elementBoundingBoxes:allocate(maxElements, arena) then return false end
@@ -262,6 +268,10 @@ terra ui.Context:initialize(arena: &ui.Arena, maxElements: int32) : bool
     self.measureTextHashMapInternalFreeList.length = 0
     self.measuredWords.length = 0
     self.measuredWordsFreeList.length = 0
+    self.pointerOverIds.length = 0
+    self.focusedIds.length = 0
+    self.selectedIds.length = 0
+    self.disabledIds.length = 0
     
     return true
 end
@@ -1647,6 +1657,9 @@ terra ui.MinMemorySize() : uint64
     total = total + uint64(hashBuckets) * uint64(sizeof(int32)); allocations = allocations + 1
     total = total + uint64(maxMeasureWords) * uint64(sizeof(layout.MeasuredWord)); allocations = allocations + 1
     total = total + uint64(maxMeasureWords) * uint64(sizeof(int32)); allocations = allocations + 1
+    total = total + uint64(maxElements) * uint64(sizeof(uint32)); allocations = allocations + 1
+    total = total + uint64(maxElements) * uint64(sizeof(uint32)); allocations = allocations + 1
+    total = total + uint64(maxElements) * uint64(sizeof(uint32)); allocations = allocations + 1
     total = total + uint64(maxElements) * uint64(sizeof(uint32)); allocations = allocations + 1
     total = total + uint64(maxElements * 4) * uint64(sizeof(uint32)); allocations = allocations + 1
     total = total + uint64(maxElements * 4) * uint64(sizeof(int32)); allocations = allocations + 1
@@ -3133,6 +3146,91 @@ terra ui.PointerOver(id: hash.ElementId) : bool
         i = i + 1
     end
     return false
+end
+
+local terra containsId(array: &UInt32Array, id: uint32) : bool
+    if array == nil or id == 0 then return false end
+    var i: int32 = 0
+    while i < array.length do
+        if array:getValue(i) == id then
+            return true
+        end
+        i = i + 1
+    end
+    return false
+end
+
+local terra setIdEnabled(array: &UInt32Array, id: uint32, enabled: bool)
+    if array == nil or id == 0 then return end
+    var i: int32 = 0
+    while i < array.length do
+        if array:getValue(i) == id then
+            if not enabled then
+                array:removeSwapback(i)
+            end
+            return
+        end
+        i = i + 1
+    end
+    if enabled and array.length < array.capacity then
+        array:add(id)
+    end
+end
+
+terra ui.PointerDown() : bool
+    var ctx = ui.GetCurrentContext()
+    if ctx == nil then return false end
+    return ctx.pointerInfo.state == config.POINTER_PRESSED or
+           ctx.pointerInfo.state == config.POINTER_PRESSED_THIS_FRAME
+end
+
+terra ui.ElementActive(id: hash.ElementId) : bool
+    return ui.PointerOver(id) and ui.PointerDown()
+end
+
+terra ui.ElementFocused(id: hash.ElementId) : bool
+    var ctx = ui.GetCurrentContext()
+    if ctx == nil then return false end
+    return containsId(&ctx.focusedIds, id.id)
+end
+
+terra ui.ElementSelected(id: hash.ElementId) : bool
+    var ctx = ui.GetCurrentContext()
+    if ctx == nil then return false end
+    return containsId(&ctx.selectedIds, id.id)
+end
+
+terra ui.ElementDisabled(id: hash.ElementId) : bool
+    var ctx = ui.GetCurrentContext()
+    if ctx == nil then return false end
+    return containsId(&ctx.disabledIds, id.id)
+end
+
+terra ui.SetElementFocusedForContext(ctx: &ui.Context, id: hash.ElementId, enabled: bool)
+    if ctx == nil then return end
+    setIdEnabled(&ctx.focusedIds, id.id, enabled)
+end
+
+terra ui.SetElementFocused(id: hash.ElementId, enabled: bool)
+    ui.SetElementFocusedForContext(ui.GetCurrentContext(), id, enabled)
+end
+
+terra ui.SetElementSelectedForContext(ctx: &ui.Context, id: hash.ElementId, enabled: bool)
+    if ctx == nil then return end
+    setIdEnabled(&ctx.selectedIds, id.id, enabled)
+end
+
+terra ui.SetElementSelected(id: hash.ElementId, enabled: bool)
+    ui.SetElementSelectedForContext(ui.GetCurrentContext(), id, enabled)
+end
+
+terra ui.SetElementDisabledForContext(ctx: &ui.Context, id: hash.ElementId, enabled: bool)
+    if ctx == nil then return end
+    setIdEnabled(&ctx.disabledIds, id.id, enabled)
+end
+
+terra ui.SetElementDisabled(id: hash.ElementId, enabled: bool)
+    ui.SetElementDisabledForContext(ui.GetCurrentContext(), id, enabled)
 end
 
 terra ui.OnHoverCurrent(callback: HoverCallbackFnType, userData: &opaque)

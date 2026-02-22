@@ -31,6 +31,7 @@ test:
 	$(TERRA) tests/test_builder.t
 	$(TERRA) tests/test_language_extension.t
 	$(TERRA) tests/test_state_requires_id.t
+	$(TERRA) tests/test_runtime_states_integration.t
 	$(TERRA) tests/test_integration_v2.t
 	$(TERRA) tests/test_v3_parser.t
 	$(TERRA) tests/test_v3_integration_basic.t

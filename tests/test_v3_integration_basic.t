@@ -179,6 +179,52 @@ assert(nested_panel.children[2].text == "raw child", "Second child should be raw
 assert(nested_panel.children[3]._argile_v3_component == "badge", "Third child should be nested badge")
 print("  Nested component invocation in fill/children: PASS")
 
+-- Test V3 state keywords beyond hover parse/lower correctly
+print("\nTesting V3 State Surface...")
+component v3_state_probe(props)
+    root
+        id(props.id)
+        state active
+            style
+                bg({ r = 0.1, g = 0.2, b = 0.3, a = 1.0 })
+            end
+        end
+        state focus
+            style
+                bg({ r = 0.2, g = 0.3, b = 0.4, a = 1.0 })
+            end
+        end
+        state selected
+            style
+                bg({ r = 0.3, g = 0.4, b = 0.5, a = 1.0 })
+            end
+        end
+        state disabled
+            style
+                bg({ r = 0.4, g = 0.5, b = 0.6, a = 1.0 })
+            end
+        end
+        text(props.label)
+            state hover
+                typography
+                    color({ r = 1.0, g = 0.8, b = 0.2, a = 1.0 })
+                end
+            end
+        end
+    end
+end
+
+local v3_state_probe_node = argile
+    v3_state_probe(id = "v3_state_probe", label = "Stateful")
+    end
+end
+assert(v3_state_probe_node.states.active ~= nil, "V3 active state missing")
+assert(v3_state_probe_node.states.focus ~= nil, "V3 focus state missing")
+assert(v3_state_probe_node.states.selected ~= nil, "V3 selected state missing")
+assert(v3_state_probe_node.states.disabled ~= nil, "V3 disabled state missing")
+assert(v3_state_probe_node.children[1].states.hover ~= nil, "V3 hover text state missing")
+print("  V3 state surface parse/lower: PASS")
+
 -- Test theme/token/recipe + use(...) semantics
 print("\nTesting Theme / Token / Recipe / Use...")
 
