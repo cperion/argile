@@ -287,16 +287,69 @@ terra run_language_extension_test() : int32
         failed = failed + 1
     else
         var found_paint = false
+        var found_rect = false
+        var paint_index: int32 = -1
+        var rect_index: int32 = -1
         var i: int32 = 0
         while i < cmd_count_paint do
             var cmd = ui.GetRenderCommandAt(i)
+            if cmd.commandType == ui.RENDER_RECTANGLE then
+                found_rect = true
+                rect_index = i
+            end
             if cmd.commandType == ui.RENDER_PAINT then
                 found_paint = true
+                paint_index = i
+                if cmd.renderData.paint.count ~= 4 then
+                    C.printf("FAIL: paint command count expected 4, got %d\n", [int32](cmd.renderData.paint.count))
+                    failed = failed + 1
+                elseif cmd.renderData.paint.ops == nil then
+                    C.printf("FAIL: paint ops pointer is nil\n")
+                    failed = failed + 1
+                else
+                    var op0 = cmd.renderData.paint.ops[0]
+                    var op1 = cmd.renderData.paint.ops[1]
+                    var op2 = cmd.renderData.paint.ops[2]
+                    var op3 = cmd.renderData.paint.ops[3]
+                    if op0.kind ~= ui.PAINT_OP_FILL then
+                        C.printf("FAIL: paint op0 kind expected FILL, got %d\n", [int32](op0.kind))
+                        failed = failed + 1
+                    end
+                    if op1.kind ~= ui.PAINT_OP_ROUND_RECT then
+                        C.printf("FAIL: paint op1 kind expected ROUND_RECT, got %d\n", [int32](op1.kind))
+                        failed = failed + 1
+                    end
+                    if not ui.FloatEqual(op1.x, 10.0) or not ui.FloatEqual(op1.y, 10.0) or
+                       not ui.FloatEqual(op1.w, 80.0) or not ui.FloatEqual(op1.h, 80.0) then
+                        C.printf("FAIL: round_rect geometry mismatch (%.1f, %.1f, %.1f, %.1f)\n", op1.x, op1.y, op1.w, op1.h)
+                        failed = failed + 1
+                    end
+                    if op2.kind ~= ui.PAINT_OP_STROKE or op2.width ~= 2 then
+                        C.printf("FAIL: paint op2 stroke mismatch kind=%d width=%d\n", [int32](op2.kind), [int32](op2.width))
+                        failed = failed + 1
+                    end
+                    if op3.kind ~= ui.PAINT_OP_LINE then
+                        C.printf("FAIL: paint op3 kind expected LINE, got %d\n", [int32](op3.kind))
+                        failed = failed + 1
+                    end
+                    if not ui.FloatEqual(op3.x, 10.0) or not ui.FloatEqual(op3.y, 50.0) or
+                       not ui.FloatEqual(op3.x2, 90.0) or not ui.FloatEqual(op3.y2, 50.0) then
+                        C.printf("FAIL: line geometry mismatch (%.1f, %.1f -> %.1f, %.1f)\n", op3.x, op3.y, op3.x2, op3.y2)
+                        failed = failed + 1
+                    end
+                end
             end
             i = i + 1
         end
         if not found_paint then
             C.printf("FAIL: no RENDER_PAINT command found\n")
+            failed = failed + 1
+        end
+        if not found_rect then
+            C.printf("FAIL: painted element did not emit rectangle background command\n")
+            failed = failed + 1
+        elseif paint_index <= rect_index then
+            C.printf("FAIL: paint command should be emitted after rectangle (paint=%d rect=%d)\n", paint_index, rect_index)
             failed = failed + 1
         end
     end

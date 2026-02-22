@@ -20,6 +20,7 @@ local CustomConfigArray = array_mod.Array(config.CustomConfig)
 local BorderConfigArray = array_mod.Array(config.BorderConfig)
 local SharedConfigArray = array_mod.Array(config.SharedConfig)
 local PaintConfigArray = array_mod.Array(config.PaintConfig)
+local PaintOpArray = array_mod.Array(config.PaintOp)
 local RenderCommandArray = array_mod.Array(config.RenderCommand)
 local TextElementDataArray = array_mod.Array(layout.TextElementData)
 local WrappedTextLineArray = array_mod.Array(layout.WrappedTextLine)
@@ -85,6 +86,7 @@ ui.Context = struct {
     borderConfigs : BorderConfigArray,
     sharedConfigs : SharedConfigArray,
     paintConfigs : PaintConfigArray,
+    paintOps : PaintOpArray,
     wrappedTextLines : WrappedTextLineArray,
     layoutElementTreeRoots : LayoutElementTreeRootArray,
     layoutElementTreeNodeArray1 : LayoutElementTreeNodeArray,
@@ -213,6 +215,7 @@ terra ui.Context:initialize(arena: &ui.Arena, maxElements: int32) : bool
     if not self.borderConfigs:allocate(maxElements, arena) then return false end
     if not self.sharedConfigs:allocate(maxElements, arena) then return false end
     if not self.paintConfigs:allocate(maxElements, arena) then return false end
+    if not self.paintOps:allocate(maxElements * 16, arena) then return false end
     if not self.wrappedTextLines:allocate(maxElements * 8, arena) then return false end
     if not self.layoutElementTreeRoots:allocate(maxElements, arena) then return false end
     if not self.layoutElementTreeNodeArray1:allocate(maxElements, arena) then return false end
@@ -307,6 +310,8 @@ terra ui.Context:resetEphemeral()
     self.customConfigs:clear()
     self.borderConfigs:clear()
     self.sharedConfigs:clear()
+    self.paintConfigs:clear()
+    self.paintOps:clear()
 
     var mapIdx: int32 = 0
     while mapIdx < self.elementIdLookupValues.length do
@@ -674,7 +679,24 @@ end
 
 terra ui.Context:storePaintConfig(cfg: config.PaintConfig) : &config.PaintConfig
     if self.maxElementsExceeded then return nil end
-    return self.paintConfigs:add(cfg)
+    var stored = cfg
+    if cfg.count > 0 then
+        if cfg.ops == nil then return nil end
+        var count = [int32](cfg.count)
+        if self.paintOps.length + count > self.paintOps.capacity then
+            self.maxElementsExceeded = true
+            return nil
+        end
+        var dst = &self.paintOps.internalArray[self.paintOps.length]
+        var i: int32 = 0
+        while i < count do
+            dst[i] = cfg.ops[i]
+            i = i + 1
+        end
+        self.paintOps.length = self.paintOps.length + count
+        stored.ops = dst
+    end
+    return self.paintConfigs:add(stored)
 end
 
 terra ui.Context:attachElementConfig(cfg: config.ElementConfigUnion, cfgType: uint8) : &config.ElementConfig
@@ -1609,6 +1631,8 @@ terra ui.MinMemorySize() : uint64
     total = total + uint64(maxElements) * uint64(sizeof(config.CustomConfig)); allocations = allocations + 1
     total = total + uint64(maxElements) * uint64(sizeof(config.BorderConfig)); allocations = allocations + 1
     total = total + uint64(maxElements) * uint64(sizeof(config.SharedConfig)); allocations = allocations + 1
+    total = total + uint64(maxElements) * uint64(sizeof(config.PaintConfig)); allocations = allocations + 1
+    total = total + uint64(maxElements * 16) * uint64(sizeof(config.PaintOp)); allocations = allocations + 1
     total = total + uint64(maxElements * 8) * uint64(sizeof(layout.WrappedTextLine)); allocations = allocations + 1
     total = total + uint64(maxElements) * uint64(sizeof(layout.LayoutElementTreeRoot)); allocations = allocations + 1
     total = total + uint64(maxElements) * uint64(sizeof(layout.LayoutElementTreeNode)); allocations = allocations + 1
@@ -2646,19 +2670,6 @@ terra ui.Context:calculateFinalLayout()
                                         emitRectangle = false
                                     end
 
-                                    if decoded.paint ~= nil then
-                                        var cmd: config.RenderCommand
-                                        cmd.boundingBox = boundingBox
-                                        cmd.id = currentElement.id
-                                        cmd.commandType = config.RENDER_PAINT
-                                        cmd.zIndex = root.zIndex
-                                        cmd.renderData.paint.ops = decoded.paint.ops
-                                        cmd.renderData.paint.count = decoded.paint.count
-                                        if self.renderCommands.length < self.renderCommands.capacity then
-                                            self.renderCommands:add(cmd)
-                                        end
-                                    end
-
                                     if emitRectangle then
                                         var cmd: config.RenderCommand
                                         cmd.boundingBox = boundingBox
@@ -2672,6 +2683,19 @@ terra ui.Context:calculateFinalLayout()
                                             cmd.userData = decoded.shared.userData
                                         end
                                         
+                                        if self.renderCommands.length < self.renderCommands.capacity then
+                                            self.renderCommands:add(cmd)
+                                        end
+                                    end
+
+                                    if decoded.paint ~= nil then
+                                        var cmd: config.RenderCommand
+                                        cmd.boundingBox = boundingBox
+                                        cmd.id = currentElement.id
+                                        cmd.commandType = config.RENDER_PAINT
+                                        cmd.zIndex = root.zIndex
+                                        cmd.renderData.paint.ops = decoded.paint.ops
+                                        cmd.renderData.paint.count = decoded.paint.count
                                         if self.renderCommands.length < self.renderCommands.capacity then
                                             self.renderCommands:add(cmd)
                                         end

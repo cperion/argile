@@ -283,19 +283,33 @@ local function compilePaintConfig(paint_ops)
     
     local count = #paint_ops
     local count_t = terralib.constant(int32, count)
+
+    local kind_map = {
+        fill = ui.PAINT_OP_FILL,
+        stroke = ui.PAINT_OP_STROKE,
+        rect = ui.PAINT_OP_RECT,
+        round_rect = ui.PAINT_OP_ROUND_RECT,
+        circle = ui.PAINT_OP_CIRCLE,
+        line = ui.PAINT_OP_LINE,
+    }
     
     local op_init_list = terralib.newlist()
-    for i, op in ipairs(paint_ops) do
-        local idx = i - 1
-        local idx_t = terralib.constant(int32, idx)
+    for _, op in ipairs(paint_ops) do
         local color = op.color or { r = 0, g = 0, b = 0, a = 1 }
-        local kind_t = terralib.constant(uint8, op.kind or ui.PAINT_OP_FILL)
+        local kind_value = op.kind
+        if type(kind_value) == "string" then
+            kind_value = kind_map[kind_value]
+        end
+        if kind_value == nil then
+            kind_value = ui.PAINT_OP_FILL
+        end
+        local kind_t = terralib.constant(uint8, kind_value)
         local color_r = terralib.constant(float, value_or(color.r, 0.0))
         local color_g = terralib.constant(float, value_or(color.g, 0.0))
         local color_b = terralib.constant(float, value_or(color.b, 0.0))
         local color_a = terralib.constant(float, value_or(color.a, 1.0))
-        local x = terralib.constant(float, value_or(op.x, 0.0))
-        local y = terralib.constant(float, value_or(op.y, 0.0))
+        local x = terralib.constant(float, value_or(op.x, value_or(op.x1, value_or(op.cx, 0.0))))
+        local y = terralib.constant(float, value_or(op.y, value_or(op.y1, value_or(op.cy, 0.0))))
         local w = terralib.constant(float, value_or(op.w, 0.0))
         local h = terralib.constant(float, value_or(op.h, 0.0))
         local r = terralib.constant(float, value_or(op.r, 0.0))
