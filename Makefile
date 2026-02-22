@@ -23,7 +23,7 @@ build-parity:
 	./tools/build_parity.sh
 
 love-demo: build
-	love demo/love
+	love backends/love2d/demo
 
 test:
 	$(TERRA) tests/test_foundation.t
