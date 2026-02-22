@@ -127,6 +127,7 @@ local parse_v3_node_body
 local parse_v3_node_decl
 local parse_v3_component_invoke
 local is_component_invocation
+local validate_component_template
 
 local function matches_word(lex, word)
     if lex:matches(word) then
@@ -675,10 +676,7 @@ parse_v3_node_body = function(lex, node)
             end
             expect_word(lex, "part")
             lex:expect("(")
-            if not lex:matches(lex.name) then
-                lex:errorexpected("part name")
-            end
-            node.part_name = lex:next().value
+            node.part_name = read_word_like_name(lex, "part name")
             lex:expect(")")
         elseif matches_word(lex, "slot") then
             if node.slot_name then
@@ -689,10 +687,7 @@ parse_v3_node_body = function(lex, node)
             end
             expect_word(lex, "slot")
             lex:expect("(")
-            if not lex:matches(lex.name) then
-                lex:errorexpected("slot name")
-            end
-            node.slot_name = lex:next().value
+            node.slot_name = read_word_like_name(lex, "slot name")
             lex:expect(")")
             
             -- Parse fallback content
@@ -771,6 +766,48 @@ local function parse_v3_root_block(lex)
     return node
 end
 
+validate_component_template = function(component_name, root_node)
+    local seen_slots = {}
+
+    local function visit(node)
+        if not AST.IsKind(node, "NodeDecl") then
+            return
+        end
+
+        if node.part_name == "root" then
+            Span.Raise(node._span, "part name 'root' is reserved (implicit component root path) in component '" .. component_name .. "'")
+        end
+
+        if node.slot_name then
+            if seen_slots[node.slot_name] ~= nil then
+                Span.Raise(node._span, "duplicate slot '" .. node.slot_name .. "' in component '" .. component_name .. "' (slot names must be unique per component)")
+            end
+            seen_slots[node.slot_name] = true
+        end
+
+        local sibling_parts = {}
+        for _, child in ipairs(node.children or {}) do
+            if AST.IsKind(child, "NodeDecl") and child.part_name ~= nil then
+                if child.part_name == "root" then
+                    Span.Raise(child._span, "part name 'root' is reserved (implicit component root path) in component '" .. component_name .. "'")
+                end
+                if sibling_parts[child.part_name] then
+                    Span.Raise(child._span, "duplicate sibling part '" .. child.part_name .. "' in component '" .. component_name .. "'")
+                end
+                sibling_parts[child.part_name] = true
+            end
+        end
+
+        for _, child in ipairs(node.children or {}) do
+            if AST.IsKind(child, "NodeDecl") then
+                visit(child)
+            end
+        end
+    end
+
+    visit(root_node)
+end
+
 local function parse_v3_component_decl(lex)
     local span = Span.SpanFromLexer(lex)
     expect_word(lex, "component")
@@ -828,6 +865,8 @@ local function parse_v3_component_decl(lex)
     if not root then
         Span.Raise(span, "component must have exactly one root block")
     end
+
+    validate_component_template(name, root)
     
     local decl = AST.ComponentDecl(name, params, variants, root, span)
     v3_registry.components[name] = decl
@@ -843,10 +882,7 @@ local function parse_v3_fill_decl(lex)
     local span = Span.SpanFromLexer(lex)
     expect_word(lex, "fill")
     lex:expect("(")
-    if not lex:matches(lex.name) then
-        lex:errorexpected("slot name")
-    end
-    local slot_name = lex:next().value
+    local slot_name = read_word_like_name(lex, "slot name")
     lex:expect(")")
     
     local children = {}

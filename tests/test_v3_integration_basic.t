@@ -126,7 +126,32 @@ end
 local card_v2 = card_compiled
 assert(card_v2 ~= nil, "Card lowering returned nil")
 assert(card_v2._argile_v3_component == "card", "Card component metadata missing")
+assert(card_v2.children[1]._argile_v3_part_path == "root.header", "Expected root-prefixed part path for header")
 print("  Card with fill: PASS")
+
+-- Fallback header should be used when no fill provided
+local card_fallback = argile
+    card()
+        id("fallback_card")
+    end
+end
+assert(card_fallback.children[1].children[1].text == "Default Header", "Expected slot fallback content when no fill provided")
+
+-- Multiple fills for same slot append in source order and replace fallback
+local card_multi_fill = argile
+    card()
+        id("multi_fill_card")
+        fill(header)
+            text("A")
+        end
+        fill(header)
+            text("B")
+        end
+    end
+end
+assert(#card_multi_fill.children[1].children == 2, "Expected two appended slot fill nodes")
+assert(card_multi_fill.children[1].children[1].text == "A", "Expected first fill content first")
+assert(card_multi_fill.children[1].children[2].text == "B", "Expected second fill content second")
 
 -- Test nested component invocation in fill and children
 print("\nTesting Nested Component Composition...")
@@ -161,6 +186,7 @@ assert(nested_card.children[1] ~= nil, "Expected card header node")
 assert(nested_card.children[1].children[1] ~= nil, "Expected nested header child")
 assert(nested_card.children[1].children[1]._argile_v3_component == "badge", "Expected nested badge component in slot fill")
 assert(nested_card.children[1].children[1].id == "nested_badge", "Nested badge id mismatch")
+assert(nested_card.children[1]._argile_v3_part_path == "root.header", "Nested card header part path mismatch")
 
 local nested_panel = argile
     panel(id = "panel_root")
@@ -351,7 +377,7 @@ expect_v3_error("Unknown slot fill error", [=[
             end
         end
     end
-]=], "unknown slot")
+]=], "unknown slot 'footer' in component 'v3_slot_card'")
 
 expect_v3_error("Missing children marker error", [=[
     import "src/lang.argile_v3"
@@ -365,7 +391,7 @@ expect_v3_error("Missing children marker error", [=[
             text("extra child")
         end
     end
-]=], "no children marker")
+]=], "component 'v3_no_children' has no children marker")
 
 expect_v3_error("Invalid variant value error", [=[
     import "src/lang.argile_v3"
@@ -380,6 +406,47 @@ expect_v3_error("Invalid variant value error", [=[
         end
     end
 ]=], "invalid variant value")
+
+expect_v3_error("Duplicate sibling part error", [=[
+    import "src/lang.argile_v3"
+    component v3_dup_parts(props)
+        root
+            el
+                part(row)
+            end
+            el
+                part(row)
+            end
+        end
+    end
+]=], "duplicate sibling part")
+
+expect_v3_error("Duplicate slot in component error", [=[
+    import "src/lang.argile_v3"
+    component v3_dup_slots(props)
+        root
+            el
+                slot(header)
+                end
+            end
+            el
+                slot(header)
+                end
+            end
+        end
+    end
+]=], "duplicate slot 'header'")
+
+expect_v3_error("Reserved part root error", [=[
+    import "src/lang.argile_v3"
+    component v3_bad_root_part(props)
+        root
+            el
+                part(root)
+            end
+        end
+    end
+]=], "part name 'root' is reserved")
 
 -- Summary
 print("\n" .. string.rep("=", 50))

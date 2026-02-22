@@ -224,12 +224,12 @@ local function find_children_marker(node)
     return nil
 end
 
-local function resolve_children(root, body_nodes, invoke_span)
+local function resolve_children(root, body_nodes, invoke_span, component_name)
     local marker = find_children_marker(root)
     
     if not marker and #body_nodes > 0 then
         Span.Raise(invoke_span,
-            "invocation has content but component has no children marker")
+            "invocation has content but component '" .. tostring(component_name) .. "' has no children marker")
     end
     
     if marker then
@@ -400,15 +400,15 @@ function M.LowerComponentInvoke(invoke, env_fn, registry)
         check_slots(root)
         if not found then
             Span.Raise(invoke._span,
-                "fill targeting unknown slot '" .. slot_name .. "'")
+                "fill targeting unknown slot '" .. slot_name .. "' in component '" .. tostring(component.name) .. "'")
         end
     end
     
     -- 7. Resolve children with invocation body nodes
-    resolve_children(root, invoke.body_nodes, invoke._span)
+    resolve_children(root, invoke.body_nodes, invoke._span, component.name)
     
     -- 8. Add metadata
-    add_v3_metadata(root, component.name, nil)
+    add_v3_metadata(root, component.name, "root")
     
     -- 9. Build V2 node
     local v2_node = build_v2_node(root, component_env_fn, component.name, registry)
