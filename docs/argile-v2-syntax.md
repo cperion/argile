@@ -11,7 +11,7 @@ Argile V2 is a declarative DSL (embedded in Lua/Terra) for constructing immediat
 - **Nodes**: Elements (`el`) and text (`text`)
 - **Blocks**: `layout`, `style`, `typography`, `paint`
 - **Composition**: `use(...)` for style patches
-- **States**: `when` for hover/active/focus overlays
+- **States**: `when` overlays (`hover` implemented; others currently error)
 
 ---
 
@@ -19,7 +19,7 @@ Argile V2 is a declarative DSL (embedded in Lua/Terra) for constructing immediat
 
 ### Basic Element
 
-```lua
+```terra
 argile el
     layout
         width_fixed(100.0)
@@ -33,7 +33,7 @@ end
 
 ### Element with ID
 
-```lua
+```terra
 argile el("button")
     layout
         width_fixed(120.0)
@@ -41,18 +41,18 @@ argile el("button")
     end
     style
         bg(ds.colors.primary_500)
-        corner_radius(8.0)
+        radius(8.0)
     end
 end
 ```
 
 ### Text Node
 
-```lua
+```terra
 argile text("Hello, World!")
     typography
-        fontSize(16)
-        color(ds.colors.text_primary)
+        font_size(16)
+        color(ds.colors.fg_default)
     end
 end
 ```
@@ -63,15 +63,15 @@ end
 
 Controls the element's layout model and sizing.
 
-```lua
+```terra
 layout
     width_fixed(100.0)              -- Fixed pixel width
-    height_grow(1.0)                -- Grow to fill available space
-    direction(left_to_right)        -- Flow direction
-    gap(8)                         -- Space between children
-    padding(16)                    -- Internal padding
-    align_x(center)                -- Horizontal alignment
-    align_y(center)                -- Vertical alignment
+    height_grow                     -- Grow to fill available space
+    dir(left_to_right)              -- Flow direction
+    gap(8)                          -- Space between children
+    padding(16)                     -- Internal padding
+    align_x(center)                 -- Horizontal alignment
+    align_y(center)                 -- Vertical alignment
 end
 ```
 
@@ -81,12 +81,12 @@ end
 
 Visual styling for the element's appearance.
 
-```lua
+```terra
 style
     bg(ds.colors.surface_600)      -- Background color
-    corner_radius(8.0)             -- Corner radius (all corners)
+    radius(8.0)                    -- Corner radius (all corners)
     border_width(2)                -- Border thickness
-    border_color(ds.colors.border) -- Border color
+    border_color(ds.colors.border_default) -- Border color
 end
 ```
 
@@ -96,13 +96,13 @@ end
 
 Text styling (only valid inside `text` nodes).
 
-```lua
+```terra
 argile text("Label")
     typography
-        fontSize(18)
-        color(ds.colors.text_primary)
-        letterSpacing(0.5)
-        lineHeight(1.5)
+        font_size(18)
+        color(ds.colors.fg_default)
+        letter_spacing(1)
+        line_height(24)
     end
 end
 ```
@@ -113,12 +113,12 @@ end
 
 Declarative shape drawing layer.
 
-```lua
+```terra
 paint
     fill(ds.colors.surface_600)      -- Solid fill
-    round_rect(0, 0, 100, 50, 8)   -- Rounded rectangle
-    stroke(2, ds.colors.border)    -- Stroke
-    line(0, 25, 100, 25)           -- Line from (0,25) to (100,25)
+    round_rect(0, 0, 100, 50, 8)     -- Rounded rectangle
+    stroke(ds.colors.border_muted, 2) -- Stroke(color, width)
+    line(0, 25, 100, 25)             -- Line from (0,25) to (100,25)
 end
 ```
 
@@ -128,8 +128,8 @@ end
 
 Apply reusable style patches.
 
-```lua
-local button_style = ds.recipes.button
+```terra
+local button_style = ds.button()
 
 argile el("my_button")
     use(button_style)
@@ -141,12 +141,14 @@ end
 
 Multiple patches compose left-to-right (later patches override earlier):
 
-```lua
+```terra
 argile el
-    use(ds.recipes.panel)
-    use(ds.tokens.elevated)
+    use(ds.panel())
+    use({
+        border = { color = ds.colors.border_muted }
+    })
     style
-        bg(ds.colors.custom)  -- Overrides panel background
+        bg(ds.colors.primary_700)  -- Overrides panel background
     end
 end
 ```
@@ -155,11 +157,16 @@ end
 
 ## State Overlays: `when`
 
-Apply styles conditionally based on element state. Requires string id.
+Apply styles conditionally based on element state.
 
-### Hover State (Implemented)
+Current V2 runtime support:
 
-```lua
+- `hover` overlays are implemented and require a string id
+- other parsed states currently fail with clear compile-time errors
+
+### Hover State (Implemented for `style` and `paint` overlays)
+
+```terra
 argile el("hover_button")
     layout
         width_fixed(120.0)
@@ -176,6 +183,10 @@ argile el("hover_button")
 end
 ```
 
+Current limitation:
+
+- `when hover` with `typography` overlays is not yet implemented and fails with a clear compile-time error.
+
 ### Other States (Not Yet Implemented)
 
 The following states are parsed but produce compile-time errors:
@@ -189,63 +200,61 @@ The following states are parsed but produce compile-time errors:
 
 ## Complete Example
 
-```lua
+```terra
 local ui = require("src.builder")
 local ds = require("src/style/default_theme")
 import "src/lang.argile"
 
--- Define a styled card component
-local Card = argile el("card")
-    use(ds.recipes.panel)
+local compiled_card = argile el("card")
+    use(ds.panel())
     layout
-        direction(top_to_bottom)
-        width_grow(1.0)
+        dir(top_to_bottom)
+        width_grow
         padding(24)
         gap(16)
     end
     style
         bg(ds.colors.surface_700)
-        corner_radius(12.0)
+        radius(12.0)
     end
     
     -- Card header
-    argile el("header")
+    el("header")
         layout
-            direction(left_to_right)
+            dir(left_to_right)
             gap(12)
         end
         style
-            bg(nil)  -- Transparent
+            bg(ds.colors.transparent)
         end
         
-        argile text("Card Title")
+        text("Card Title")
             typography
-                fontSize(20)
-                color(ds.colors.text_primary)
-                bold(true)
+                font_size(ds.font_sizes.xl)
+                color(ds.colors.white)
             end
         end
     end
     
     -- Card content
-    argile el("content")
+    el("content")
         layout
-            width_grow(1.0)
+            width_grow
         end
         style
-            bg(nil)
+            bg(ds.colors.transparent)
         end
         
-        argile text("This is the card content.")
+        text("This is the card content.")
             typography
-                fontSize(14)
-                color(ds.colors.text_secondary)
+                font_size(ds.font_sizes.md)
+                color(ds.colors.fg_subtle)
             end
         end
     end
     
     -- Action button with hover state
-    argile el("action_button")
+    el("action_button")
         layout
             width_fixed(120.0)
             height_fixed(40.0)
@@ -254,7 +263,7 @@ local Card = argile el("card")
         end
         style
             bg(ds.colors.primary_600)
-            corner_radius(8.0)
+            radius(8.0)
         end
         when hover
             style
@@ -262,17 +271,16 @@ local Card = argile el("card")
             end
         end
         
-        argile text("Click Me")
+        text("Click Me")
             typography
-                fontSize(14)
+                font_size(ds.font_sizes.md)
                 color(ds.colors.white)
             end
         end
     end
 end
 
--- Compile to Terra
-local compiled = ui.compile(Card)
+-- `compiled_card` is already a Terra quote emitted by the language extension
 ```
 
 ---
@@ -286,8 +294,9 @@ local compiled = ui.compile(Card)
 
 ## Language Surface Summary
 
-```
-el(["id"])              -- Element declaration (id optional)
+```text
+el                      -- Element declaration (no id)
+el("id")                -- Element declaration (string id)
 text("content")         -- Text node
 
 layout ... end          -- Layout configuration
@@ -295,6 +304,6 @@ style ... end           -- Visual styling
 typography ... end      -- Text styling (text nodes only)
 paint ... end           -- Shape drawing
 
-use(patch)              -- Apply style patch
-when <state> ... end    -- State overlay (requires id)
+use(patch)              -- Apply style patch / recipe result
+when <state> ... end    -- State overlay (hover implemented; hover requires string id)
 ```
