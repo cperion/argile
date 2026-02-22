@@ -1,11 +1,13 @@
--- Raylib Backend Demo for Argile using Terra FFI
--- Loads raylib via FFI and renders Argile commands
+-- Raylib Backend Demo for Argile
+-- Loads raylib via Terra's FFI module and renders Argile commands
 -- Uses the same portable scene ABI as Love2D
 -- 
--- NOTE: This demo may crash on Wayland due to GLFW/raylib limitations.
--- Use X11/XWayland session if available, or run on non-Wayland display server.
-
-local ffi = require("ffi")
+-- NOTE: This demo uses Terra's FFI module (ffi.*) not pure terralib C interop.
+-- Pure Terra C interop (terralib.includecstring) has limitations with complex
+-- headers, so we use FFI for practical reasons.
+--
+-- Platform limitation: May crash on Wayland due to GLFW/raylib.
+-- Use X11/XWayland session if available.
 local C = ffi.C
 
 -- Load Argile FFI bindings
