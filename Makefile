@@ -4,7 +4,7 @@ TERRA ?= terra
 LUAJIT ?= luajit
 CC ?= cc
 
-.PHONY: all build build-argile build-bench build-parity love-demo test bench bench-quick bench-heavy bench-stress parity parity-quick parity-heavy parity-stress clean
+.PHONY: all build build-argile build-bench build-parity love-demo love-demo-portable test bench bench-quick bench-heavy bench-stress parity parity-quick parity-heavy parity-stress clean
 
 all: build
 
@@ -23,6 +23,9 @@ build-parity:
 	./tools/build_parity.sh
 
 love-demo: build
+	love backends/love2d/demo_ffi
+
+love-demo-portable: build
 	love backends/love2d/demo
 
 test:

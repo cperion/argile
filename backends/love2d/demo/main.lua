@@ -12,7 +12,9 @@ void free(void* ptr);
 ]]
 
 local argile = ffi.load("build/libargile.so")
-local renderer = require("backends.love2d.renderer")
+-- `love backends/love2d/demo` makes the demo directory the game root, so use
+-- an explicit file load from repo-relative path instead of `require(...)`.
+local renderer = dofile("backends/love2d/renderer.lua")
 
 -- State
 local arena_bytes = 256 * 1024 * 1024
@@ -61,7 +63,7 @@ function love.load()
     argile.ArgileDemoGetIds(demo_ids)
 end
 
-function love.update()
+function love.update(dt)
     local ww, hh = love.graphics.getDimensions()
     local mx, my = love.mouse.getPosition()
     local down = love.mouse.isDown(1)
@@ -77,7 +79,7 @@ function love.update()
     input.pointer_released = false -- TODO: track released state
     input.scroll_delta_x = 0
     input.scroll_delta_y = 0
-    input.delta_time = love.timer.getDelta()
+    input.delta_time = dt or 0
 
     -- Set element states using portable API
     argile.SetElementFocusedForContext(ctx, demo_ids.card, demo_focus)
