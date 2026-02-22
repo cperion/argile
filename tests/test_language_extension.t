@@ -156,6 +156,39 @@ local compiled_with_paint = argile el("painted_element")
     end
 end
 
+local compiled_hover_style = argile el("hover_style_test")
+    layout
+        width_fixed(80.0)
+        height_fixed(40.0)
+    end
+    style
+        bg(ds.colors.surface_600)
+    end
+    when hover
+        style
+            bg(ds.colors.primary_500)
+        end
+    end
+end
+
+local compiled_hover_paint = argile el("hover_paint_test")
+    layout
+        width_fixed(60.0)
+        height_fixed(60.0)
+    end
+    style
+        bg(ds.colors.surface_700)
+    end
+    paint
+        fill(ds.colors.surface_500)
+    end
+    when hover
+        paint
+            fill(ds.colors.primary_400)
+        end
+    end
+end
+
 if not terralib.isquote(compiled_expr) then
     error("argile expression form did not produce a Terra quote")
 end
@@ -185,6 +218,12 @@ if not terralib.isquote(compiled_with_state) then
 end
 if not terralib.isquote(compiled_with_paint) then
     error("argile element with paint did not produce a Terra quote")
+end
+if not terralib.isquote(compiled_hover_style) then
+    error("argile hover style element did not produce a Terra quote")
+end
+if not terralib.isquote(compiled_hover_paint) then
+    error("argile hover paint element did not produce a Terra quote")
 end
 
 terra run_language_extension_test() : int32
@@ -350,6 +389,54 @@ terra run_language_extension_test() : int32
             failed = failed + 1
         elseif paint_index <= rect_index then
             C.printf("FAIL: paint command should be emitted after rectangle (paint=%d rect=%d)\n", paint_index, rect_index)
+            failed = failed + 1
+        end
+    end
+
+    -- Test hover style: verify compilation and command generation
+    -- Note: Full hover behavior testing requires multi-frame simulation
+    -- Here we just verify the element compiles and generates commands
+    ui.BeginLayout(640.0, 480.0)
+    [compiled_hover_style]
+    var hover_style_cmds = ui.FinalizeLayout()
+    if hover_style_cmds <= 0 then
+        C.printf("FAIL: hover style element generated no commands\n")
+        failed = failed + 1
+    else
+        var found_rect = false
+        var i: int32 = 0
+        while i < hover_style_cmds do
+            var cmd = ui.GetRenderCommandAt(i)
+            if cmd.commandType == ui.RENDER_RECTANGLE then
+                found_rect = true
+            end
+            i = i + 1
+        end
+        if not found_rect then
+            C.printf("FAIL: hover style element no rectangle found\n")
+            failed = failed + 1
+        end
+    end
+
+    -- Test hover paint: verify compilation and command generation
+    ui.BeginLayout(640.0, 480.0)
+    [compiled_hover_paint]
+    var hover_paint_cmds = ui.FinalizeLayout()
+    if hover_paint_cmds <= 0 then
+        C.printf("FAIL: hover paint element generated no commands\n")
+        failed = failed + 1
+    else
+        var found_paint = false
+        var i: int32 = 0
+        while i < hover_paint_cmds do
+            var cmd = ui.GetRenderCommandAt(i)
+            if cmd.commandType == ui.RENDER_PAINT then
+                found_paint = true
+            end
+            i = i + 1
+        end
+        if not found_paint then
+            C.printf("FAIL: hover paint element no paint command found\n")
             failed = failed + 1
         end
     end

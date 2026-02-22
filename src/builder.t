@@ -336,19 +336,66 @@ local function compilePaintConfig(paint_ops)
     end
 end
 
+local runtime_states = {
+    hover = true,
+    active = true,
+    focus = true,
+}
+
+local function merge_state_overlay(base_node, state_node)
+    local merged = deep_copy(base_node)
+    
+    if state_node.shared then
+        merged.shared = merge_into(merged.shared, state_node.shared)
+    end
+    if state_node.border then
+        merged.border = merge_into(merged.border, state_node.border)
+    end
+    if state_node.textConfig then
+        merged.textConfig = merge_into(merged.textConfig, state_node.textConfig)
+    end
+    if state_node.paint then
+        merged.paint = merged.paint or {}
+        for _, op in ipairs(state_node.paint) do
+            table.insert(merged.paint, deep_copy(op))
+        end
+    end
+    
+    return merged
+end
+
+local function validate_runtime_states(node)
+    if not node.states then return end
+    
+    for state_name, _ in pairs(node.states) do
+        if runtime_states[state_name] then
+            if not node.id then
+                error("argile: state '" .. state_name .. "' requires element to have an id")
+            end
+        end
+    end
+end
+
 function ui.compile(node)
+    validate_runtime_states(node)
+    
     local stmts = terralib.newlist()
     
+    local has_hover = node.states and node.states.hover and node.id
+    local hover_node = has_hover and merge_state_overlay(node, node.states.hover)
+    
+    local elem_id_var = nil
     if node.id then
         if type(node.id) == "string" then
+            elem_id_var = symbol(ui.ElementId, "elem_id")
             stmts:insert(quote
                 var id_str = ui.String {
                     isStaticallyAllocated = true,
                     length = [#node.id],
                     chars = [node.id]
                 }
-                var elem_id = ui.GetElementId(id_str)
-                ui.OpenElementWithId(elem_id)
+                var [elem_id_var] = ui.GetElementId(id_str)
+                ui.OpenElementWithId([elem_id_var])
             end)
         else
             stmts:insert(quote ui.OpenElement() end)
@@ -361,12 +408,45 @@ function ui.compile(node)
         stmts:insert(quote ui.SetOpenElementLayoutConfig([compileLayoutConfig(node.layout)]) end)
     end
     
-    if node.shared then
-        stmts:insert(quote ui.AttachSharedConfig([compileSharedConfig(node.shared)]) end)
-    end
-
-    if node.border then
-        stmts:insert(quote ui.AttachBorderConfig([compileBorderConfig(node.border)]) end)
+    if has_hover then
+        local base_shared = node.shared and compileSharedConfig(node.shared)
+        local hover_shared = hover_node.shared and compileSharedConfig(hover_node.shared)
+        local base_border = node.border and compileBorderConfig(node.border)
+        local hover_border = hover_node.border and compileBorderConfig(hover_node.border)
+        
+        local hover_branch = terralib.newlist()
+        local base_branch = terralib.newlist()
+        
+        if hover_shared then
+            hover_branch:insert(quote ui.AttachSharedConfig([hover_shared]) end)
+        end
+        if hover_border then
+            hover_branch:insert(quote ui.AttachBorderConfig([hover_border]) end)
+        end
+        
+        if base_shared then
+            base_branch:insert(quote ui.AttachSharedConfig([base_shared]) end)
+        end
+        if base_border then
+            base_branch:insert(quote ui.AttachBorderConfig([base_border]) end)
+        end
+        
+        if #hover_branch > 0 or #base_branch > 0 then
+            stmts:insert(quote
+                if ui.PointerOver([elem_id_var]) then
+                    [hover_branch]
+                else
+                    [base_branch]
+                end
+            end)
+        end
+    else
+        if node.shared then
+            stmts:insert(quote ui.AttachSharedConfig([compileSharedConfig(node.shared)]) end)
+        end
+        if node.border then
+            stmts:insert(quote ui.AttachBorderConfig([compileBorderConfig(node.border)]) end)
+        end
     end
 
     if node.clip then
@@ -389,7 +469,32 @@ function ui.compile(node)
         stmts:insert(quote ui.AttachFloatingConfig([compileFloatingConfig(node.floating)]) end)
     end
 
-    if node.paint then
+    if has_hover then
+        local base_paint = node.paint and compilePaintConfig(node.paint)
+        local hover_paint = hover_node.paint and compilePaintConfig(hover_node.paint)
+        
+        if hover_paint and base_paint then
+            stmts:insert(quote
+                if ui.PointerOver([elem_id_var]) then
+                    [hover_paint]
+                else
+                    [base_paint]
+                end
+            end)
+        elseif hover_paint then
+            stmts:insert(quote
+                if ui.PointerOver([elem_id_var]) then
+                    [hover_paint]
+                end
+            end)
+        elseif base_paint then
+            stmts:insert(quote
+                if not ui.PointerOver([elem_id_var]) then
+                    [base_paint]
+                end
+            end)
+        end
+    elseif node.paint then
         local paint_stmts = compilePaintConfig(node.paint)
         if paint_stmts then
             stmts:insert(paint_stmts)
