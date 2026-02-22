@@ -289,7 +289,6 @@ terra ui.Context:resetEphemeral()
     self.wrappedTextLines:clear()
     self.layoutElementIdStrings:clear()
     self.hoverBindings:clear()
-    self.pointerOverIds:clear()
 
     var i: int32 = 0
     while i < self.scrollContainerDatas.length do
@@ -2469,6 +2468,9 @@ terra ui.Context:calculateFinalLayout()
     end
     
     self.renderCommands.length = 0
+    -- Preserve previous-frame hover ids through BeginLayout so DSL/runtime code can
+    -- query hover state while emitting the next frame. Recompute the hover set here.
+    self.pointerOverIds:clear()
     
     var dfsBuffer = self.layoutElementTreeNodeArray1
     dfsBuffer.length = 0

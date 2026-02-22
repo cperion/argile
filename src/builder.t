@@ -89,15 +89,37 @@ end
 local function compileSharedConfig(cfg)
     if cfg == nil then return nil end
     
-    local r = cfg.backgroundColor and cfg.backgroundColor.r or 0.0
-    local g = cfg.backgroundColor and cfg.backgroundColor.g or 0.0
-    local b = cfg.backgroundColor and cfg.backgroundColor.b or 0.0
-    local a = cfg.backgroundColor and cfg.backgroundColor.a or 1.0
+    local bg = cfg.backgroundColor
+    local userData = cfg.userData
+    local r = bg and value_or(bg.r, 0.0) or 0.0
+    local g = bg and value_or(bg.g, 0.0) or 0.0
+    local b = bg and value_or(bg.b, 0.0) or 0.0
+    -- SharedConfig is also used for corner radius / user data. If no explicit
+    -- background color is provided, default to transparent to avoid painting a
+    -- visible rectangle as a side effect.
+    local a = bg and value_or(bg.a, 1.0) or 0.0
     local tl = cfg.cornerRadius and cfg.cornerRadius.topLeft or 0.0
     local tr = cfg.cornerRadius and cfg.cornerRadius.topRight or 0.0
     local bl = cfg.cornerRadius and cfg.cornerRadius.bottomLeft or 0.0
     local br = cfg.cornerRadius and cfg.cornerRadius.bottomRight or 0.0
-    
+
+    if userData ~= nil then
+        return quote
+            var s : ui.SharedConfig
+            s.backgroundColor.r = [r]
+            s.backgroundColor.g = [g]
+            s.backgroundColor.b = [b]
+            s.backgroundColor.a = [a]
+            s.cornerRadius.topLeft = [tl]
+            s.cornerRadius.topRight = [tr]
+            s.cornerRadius.bottomLeft = [bl]
+            s.cornerRadius.bottomRight = [br]
+            s.userData = [userData]
+        in
+            s
+        end
+    end
+
     return quote
         var s : ui.SharedConfig
         s.backgroundColor.r = [r]
@@ -634,29 +656,37 @@ function ui.resolve_node(node)
     end
     
     if node.style_ops then
-        resolved.shared = resolved.shared or {}
-        resolved.border = resolved.border or {}
         for _, op in ipairs(node.style_ops) do
             local n = op.name
             local args = op.args or {}
             
             if n == "bg" then
+                resolved.shared = resolved.shared or {}
                 resolved.shared.backgroundColor = args[1]
             elseif n == "radius" then
+                resolved.shared = resolved.shared or {}
                 resolved.shared.cornerRadius = style.corner_radius(args[1])
             elseif n == "radius4" then
+                resolved.shared = resolved.shared or {}
                 resolved.shared.cornerRadius = style.corner_radius(args[1], args[2], args[3], args[4])
             elseif n == "border_width" then
+                resolved.border = resolved.border or {}
                 resolved.border.width = style.border_width(args[1])
             elseif n == "border_width4" then
+                resolved.border = resolved.border or {}
                 resolved.border.width = style.border_width(args[1], args[2], args[3], args[4])
             elseif n == "border_between_children" then
+                resolved.border = resolved.border or {}
                 resolved.border.width = resolved.border.width or style.border_width(0)
                 resolved.border.width.betweenChildren = args[1] or 0
             elseif n == "border_color" then
+                resolved.border = resolved.border or {}
                 resolved.border.color = args[1]
             elseif n == "user_data" then
+                resolved.shared = resolved.shared or {}
                 resolved.shared.userData = args[1]
+            else
+                error("argile style: unknown operation '" .. tostring(n) .. "'")
             end
         end
     end
@@ -683,6 +713,8 @@ function ui.resolve_node(node)
                 resolved.textConfig.textAlignment = args[1]
             elseif n == "user_data" then
                 resolved.textConfig.userData = args[1]
+            else
+                error("argile typography: unknown operation '" .. tostring(n) .. "'")
             end
         end
     end
@@ -705,6 +737,8 @@ function ui.resolve_node(node)
                 table.insert(resolved.paint, style.paint_circle(args[1], args[2], args[3]))
             elseif n == "line" then
                 table.insert(resolved.paint, style.paint_line(args[1], args[2], args[3], args[4]))
+            else
+                error("argile paint: unknown operation '" .. tostring(n) .. "'")
             end
         end
     end

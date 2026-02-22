@@ -43,7 +43,8 @@ end
 
 -- Test that hover state with non-string id produces a clear compile-time error
 local ok2, err2 = pcall(function()
-    local bad_hover_id_type = argile el(123)
+    local bad_hover_id_type = argile el
+        id(123)
         layout
             width_fixed(80.0)
             height_fixed(40.0)
@@ -73,7 +74,8 @@ end
 
 -- Test that 'when active' produces a clear "not yet implemented" error
 local ok3, err3 = pcall(function()
-    local bad_active = argile el("btn")
+    local bad_active = argile el
+        id("btn")
         layout
             width_fixed(80.0)
             height_fixed(40.0)
@@ -100,7 +102,8 @@ end
 
 -- Test that 'when focus' produces a clear "not yet implemented" error
 local ok4, err4 = pcall(function()
-    local bad_focus = argile el("inp")
+    local bad_focus = argile el
+        id("inp")
         layout
             width_fixed(120.0)
             height_fixed(32.0)
@@ -127,7 +130,8 @@ end
 
 -- Test that 'when disabled' produces a clear "not yet implemented" error
 local okd, errd = pcall(function()
-    local bad_disabled = argile el("row")
+    local bad_disabled = argile el
+        id("row")
         layout
             width_fixed(120.0)
             height_fixed(32.0)
@@ -154,7 +158,8 @@ end
 
 -- Test that 'when selected' produces a clear "not yet implemented" error
 local oks, errs = pcall(function()
-    local bad_selected = argile el("item")
+    local bad_selected = argile el
+        id("item")
         layout
             width_fixed(120.0)
             height_fixed(32.0)

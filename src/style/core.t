@@ -176,7 +176,7 @@ function style.merge_patch_list(...)
 end
 
 function style.patch(opts)
-    return style.StylePatch:new()
+    return style.merge_patch(nil, opts)
 end
 
 function style.color(r, g, b, a)

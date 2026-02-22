@@ -94,6 +94,7 @@ end
 
 local function is_v2_body_keyword(lex)
     return matches_word(lex, "layout")
+        or matches_word(lex, "id")
         or matches_word(lex, "use")
         or matches_word(lex, "style")
         or matches_word(lex, "typography")
@@ -268,6 +269,7 @@ local parse_v2_node_builder
 local parse_v2_state_block
 
 local function parse_v2_container_body(lex, is_text_node)
+    local id_value = nil
     local layout_ops = nil
     local use_patches = {}
     local style_ops_list = {}
@@ -279,7 +281,18 @@ local function parse_v2_container_body(lex, is_text_node)
     while not matches_word(lex, "end") do
         if consume_separators(lex) then
             -- noop
+        elseif matches_word(lex, "id") then
+            if id_value ~= nil then
+                lex:error("argile: duplicate id(...) directive")
+            end
+            expect_word(lex, "id")
+            lex:expect("(")
+            id_value = parse_value_fn(lex, nil)
+            lex:expect(")")
         elseif matches_word(lex, "layout") then
+            if layout_ops ~= nil then
+                lex:error("argile: duplicate layout block (only one layout block is allowed per node)")
+            end
             layout_ops = parse_block_ops(lex, "layout")
         elseif matches_word(lex, "use") then
             expect_word(lex, "use")
@@ -301,6 +314,9 @@ local function parse_v2_container_body(lex, is_text_node)
             table.insert(paint_ops_list, ops)
         elseif matches_word(lex, "when") then
             local state_name, state_builder = parse_v2_state_block(lex, is_text_node)
+            if state_builders[state_name] ~= nil then
+                lex:error("argile: duplicate when block for state '" .. state_name .. "'")
+            end
             state_builders[state_name] = state_builder
         elseif matches_word(lex, "el") or matches_word(lex, "text") then
             child_builders[#child_builders + 1] = parse_v2_node_builder(lex)
@@ -314,6 +330,10 @@ local function parse_v2_container_body(lex, is_text_node)
 
     return function(environment_function)
         local node = {}
+
+        if id_value ~= nil then
+            node.id = id_value(environment_function)
+        end
         
         if layout_ops then
             node.layout = build_layout_cfg(layout_ops, environment_function)
@@ -427,20 +447,13 @@ end
 
 local function parse_v2_element_builder(lex)
     expect_word(lex, "el")
-
-    local id_value = nil
-    if lex:nextif("(") then
-        id_value = parse_value_fn(lex, nil)
-        lex:expect(")")
+    if lex:matches("(") then
+        lex:error("argile: el(...) was removed; use id(...) inside the el body")
     end
 
     local body_builder = parse_v2_container_body(lex, false)
     return function(environment_function)
-        local node = body_builder(environment_function)
-        if id_value ~= nil then
-            node.id = id_value(environment_function)
-        end
-        return node
+        return body_builder(environment_function)
     end
 end
 
@@ -493,6 +506,7 @@ local language = {
     keywords = {
         "el",
         "text",
+        "id",
         "layout",
         "use",
         "style",

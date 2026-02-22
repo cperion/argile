@@ -249,15 +249,6 @@ theme.input = function(opts)
         paddingBottom = theme.space.sm,
     }
     
-    local focus_patch = style.StylePatch:new()
-    focus_patch.border = {
-        color = theme.colors.primary_500,
-        width = style.border_width(2),
-    }
-    patch.states = {
-        [style.STATE_FOCUS] = focus_patch,
-    }
-    
     return patch_with(opts, patch)
 end
 

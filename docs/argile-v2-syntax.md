@@ -10,6 +10,7 @@ Argile V2 is a declarative DSL (embedded in Lua/Terra) for constructing immediat
 
 - **Nodes**: Elements (`el`) and text (`text`)
 - **Blocks**: `layout`, `style`, `typography`, `paint`
+- **Node metadata**: `id(...)` (works on `el` and `text`)
 - **Composition**: `use(...)` for style patches
 - **States**: `when` overlays (`hover` implemented; others currently error)
 
@@ -34,7 +35,8 @@ end
 ### Element with ID
 
 ```terra
-argile el("button")
+argile el
+    id("button")
     layout
         width_fixed(120.0)
         height_fixed(40.0)
@@ -50,12 +52,28 @@ end
 
 ```terra
 argile text("Hello, World!")
+    id("greeting")
     typography
         font_size(16)
         color(ds.colors.fg_default)
     end
 end
 ```
+
+## Node Metadata: `id(...)`
+
+`id(...)` assigns an element id to the current node. It is valid inside both `el` and `text` bodies.
+
+```terra
+argile text("Status")
+    id("status_label")
+end
+```
+
+Rules:
+
+- At most one `id(...)` directive per node
+- `id(...)` is the only supported way to assign an id to an `el` or `text` node
 
 ---
 
@@ -131,7 +149,8 @@ Apply reusable style patches.
 ```terra
 local button_style = ds.button()
 
-argile el("my_button")
+argile el
+    id("my_button")
     use(button_style)
     layout
         width_fixed(120.0)
@@ -161,13 +180,14 @@ Apply styles conditionally based on element state.
 
 Current V2 runtime support:
 
-- `hover` overlays are implemented and require a string id
+- `hover` overlays are implemented and require a string id (via `id(...)`)
 - other parsed states currently fail with clear compile-time errors
 
 ### Hover State (Implemented for `style` and `paint` overlays)
 
 ```terra
-argile el("hover_button")
+argile el
+    id("hover_button")
     layout
         width_fixed(120.0)
         height_fixed(40.0)
@@ -205,7 +225,8 @@ local ui = require("src.builder")
 local ds = require("src/style/default_theme")
 import "src/lang.argile"
 
-local compiled_card = argile el("card")
+local compiled_card = argile el
+    id("card")
     use(ds.panel())
     layout
         dir(top_to_bottom)
@@ -219,7 +240,8 @@ local compiled_card = argile el("card")
     end
     
     -- Card header
-    el("header")
+    el
+        id("header")
         layout
             dir(left_to_right)
             gap(12)
@@ -237,7 +259,8 @@ local compiled_card = argile el("card")
     end
     
     -- Card content
-    el("content")
+    el
+        id("content")
         layout
             width_grow
         end
@@ -254,7 +277,8 @@ local compiled_card = argile el("card")
     end
     
     -- Action button with hover state
-    el("action_button")
+    el
+        id("action_button")
         layout
             width_fixed(120.0)
             height_fixed(40.0)
@@ -296,7 +320,7 @@ end
 
 ```text
 el                      -- Element declaration (no id)
-el("id")                -- Element declaration (string id)
+id("id")                -- Node id metadata (inside el/text body)
 text("content")         -- Text node
 
 layout ... end          -- Layout configuration

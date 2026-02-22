@@ -7,7 +7,8 @@ local ui = require("src.builder")
 local ds = require("src/style/default_theme")
 import "src/lang.argile"
 
-local compiled_expr = argile el("lang_expr_root")
+local compiled_expr = argile el
+    id("lang_expr_root")
     layout
         width_fixed(640.0)
         height_fixed(480.0)
@@ -16,7 +17,8 @@ local compiled_expr = argile el("lang_expr_root")
     style
         bg(ds.colors.surface_800)
     end
-    el("lang_expr_child")
+    el
+        id("lang_expr_child")
         layout
             width_fixed(120.0)
             height_fixed(32.0)
@@ -29,7 +31,8 @@ end
 
 local dsl_root_id = "lang_dsl_root"
 local dsl_text = "dsl text node"
-local compiled_dsl = argile el(dsl_root_id)
+local compiled_dsl = argile el
+    id(dsl_root_id)
     layout
         width_fixed(520.0)
         height_fixed(300.0)
@@ -44,7 +47,8 @@ local compiled_dsl = argile el(dsl_root_id)
             align(center)
         end
     end
-    el("lang_dsl_child")
+    el
+        id("lang_dsl_child")
         layout
             width_grow
             height_fixed(40)
@@ -52,7 +56,8 @@ local compiled_dsl = argile el(dsl_root_id)
     end
 end
 
-local compiled_dsl_end = argile el("lang_dsl_end_root")
+local compiled_dsl_end = argile el
+    id("lang_dsl_end_root")
     layout
         width_fixed(360.0)
         height_fixed(220.0)
@@ -67,7 +72,8 @@ local compiled_dsl_end = argile el("lang_dsl_end_root")
             align(left)
         end
     end
-    el("lang_dsl_end_child")
+    el
+        id("lang_dsl_end_child")
         layout
             width_grow
             height_fixed(24.0)
@@ -75,7 +81,8 @@ local compiled_dsl_end = argile el("lang_dsl_end_root")
     end
 end
 
-argile compiled_stmt = el("lang_stmt_root")
+argile compiled_stmt = el
+    id("lang_stmt_root")
     layout
         width_fixed(320.0)
         height_fixed(120.0)
@@ -85,7 +92,8 @@ argile compiled_stmt = el("lang_stmt_root")
     end
 end
 
-argile compiled_stmt_dsl = el("lang_stmt_dsl_root")
+argile compiled_stmt_dsl = el
+    id("lang_stmt_dsl_root")
     layout
         width_fixed(280.0)
         height_fixed(90.0)
@@ -96,7 +104,8 @@ argile compiled_stmt_dsl = el("lang_stmt_dsl_root")
 end
 
 do
-    local argile compiled_local = el("lang_local_root")
+    local argile compiled_local = el
+        id("lang_local_root")
         layout
             width_fixed(240.0)
             height_fixed(100.0)
@@ -109,7 +118,8 @@ do
 end
 
 do
-    local argile compiled_local_dsl = el("lang_local_dsl_root")
+    local argile compiled_local_dsl = el
+        id("lang_local_dsl_root")
         layout
             width_fixed(220.0)
             height_fixed(70.0)
@@ -120,14 +130,16 @@ do
     _G.__compiled_local_dsl_layout = compiled_local_dsl
 end
 
-local compiled_button = argile el("test_button")
+local compiled_button = argile el
+    id("test_button")
     use(ds.button({ tone = "primary", size = "md" }))
     text("Click Me")
         use(ds.text.button())
     end
 end
 
-local compiled_with_state = argile el("stateful_element")
+local compiled_with_state = argile el
+    id("stateful_element")
     use(ds.button({ tone = "primary" }))
     when hover
         style
@@ -139,7 +151,8 @@ local compiled_with_state = argile el("stateful_element")
     end
 end
 
-local compiled_with_paint = argile el("painted_element")
+local compiled_with_paint = argile el
+    id("painted_element")
     layout
         width_fixed(100.0)
         height_fixed(100.0)
@@ -156,7 +169,8 @@ local compiled_with_paint = argile el("painted_element")
     end
 end
 
-local compiled_hover_style = argile el("hover_style_test")
+local compiled_hover_style = argile el
+    id("hover_style_test")
     layout
         width_fixed(80.0)
         height_fixed(40.0)
@@ -171,7 +185,8 @@ local compiled_hover_style = argile el("hover_style_test")
     end
 end
 
-local compiled_hover_paint = argile el("hover_paint_test")
+local compiled_hover_paint = argile el
+    id("hover_paint_test")
     layout
         width_fixed(60.0)
         height_fixed(60.0)
@@ -186,6 +201,21 @@ local compiled_hover_paint = argile el("hover_paint_test")
         paint
             fill(ds.colors.primary_400)
         end
+    end
+end
+
+local compiled_text_with_body_id = argile text("Hoverable Label")
+    id("hoverable_text")
+    style
+        bg(ds.colors.surface_700)
+    end
+    when hover
+        style
+            bg(ds.colors.primary_500)
+        end
+    end
+    typography
+        color(ds.colors.white)
     end
 end
 
@@ -224,6 +254,9 @@ if not terralib.isquote(compiled_hover_style) then
 end
 if not terralib.isquote(compiled_hover_paint) then
     error("argile hover paint element did not produce a Terra quote")
+end
+if not terralib.isquote(compiled_text_with_body_id) then
+    error("argile text node with body id did not produce a Terra quote")
 end
 
 terra run_language_extension_test() : int32
@@ -439,6 +472,14 @@ terra run_language_extension_test() : int32
             C.printf("FAIL: hover paint element no paint command found\n")
             failed = failed + 1
         end
+    end
+
+    ui.BeginLayout(640.0, 480.0)
+    [compiled_text_with_body_id]
+    var text_with_body_id_cmds = ui.FinalizeLayout()
+    if text_with_body_id_cmds <= 0 then
+        C.printf("FAIL: text node with body id generated no commands\n")
+        failed = failed + 1
     end
 
     var id_from_chars = ui.GetElementIdFromChars("id_test", 7)
