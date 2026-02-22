@@ -1,10 +1,48 @@
 local ui = require("src.init")
+local style = require("src/style/core")
 
 local function value_or(v, default)
     if v == nil then
         return default
     end
     return v
+end
+
+local function is_table(v)
+    return type(v) == "table"
+end
+
+local function deep_copy(t)
+    if not is_table(t) then return t end
+    local copy = {}
+    for k, v in pairs(t) do
+        if is_table(v) then
+            copy[k] = deep_copy(v)
+        else
+            copy[k] = v
+        end
+    end
+    return copy
+end
+
+local function deep_merge(a, b)
+    if not is_table(a) then return deep_copy(b) end
+    if not is_table(b) then return deep_copy(a) end
+    local result = deep_copy(a)
+    for k, v in pairs(b) do
+        if is_table(v) and is_table(result[k]) then
+            result[k] = deep_merge(result[k], v)
+        else
+            result[k] = deep_copy(v)
+        end
+    end
+    return result
+end
+
+local function merge_into(target, source)
+    if not source then return target end
+    if not target then return deep_copy(source) end
+    return deep_merge(target, source)
 end
 
 local function compileLayoutConfig(cfg)
@@ -351,6 +389,161 @@ function ui.compileRenderFunction(name, layoutNode)
     _G[name] = fn
     
     return fn
+end
+
+function ui.resolve_node(node)
+    if not node then return {} end
+    
+    local resolved = {}
+    
+    resolved.id = node.id
+    resolved.text = node.text
+    
+    resolved.layout = deep_copy(node.layout)
+    resolved.shared = deep_copy(node.shared)
+    resolved.border = deep_copy(node.border)
+    resolved.textConfig = deep_copy(node.textConfig)
+    resolved.clip = deep_copy(node.clip)
+    resolved.aspect = deep_copy(node.aspect)
+    resolved.image = deep_copy(node.image)
+    resolved.custom = deep_copy(node.custom)
+    resolved.floating = deep_copy(node.floating)
+    resolved.paint = deep_copy(node.paint)
+    
+    if node.use_patches then
+        for _, patch in ipairs(node.use_patches) do
+            if patch.layout then
+                resolved.layout = merge_into(resolved.layout, patch.layout)
+            end
+            if patch.shared then
+                resolved.shared = merge_into(resolved.shared, patch.shared)
+            end
+            if patch.border then
+                resolved.border = merge_into(resolved.border, patch.border)
+            end
+            if patch.textConfig then
+                resolved.textConfig = merge_into(resolved.textConfig, patch.textConfig)
+            end
+            if patch.clip then
+                resolved.clip = merge_into(resolved.clip, patch.clip)
+            end
+            if patch.aspect then
+                resolved.aspect = merge_into(resolved.aspect, patch.aspect)
+            end
+            if patch.image then
+                resolved.image = merge_into(resolved.image, patch.image)
+            end
+            if patch.custom then
+                resolved.custom = merge_into(resolved.custom, patch.custom)
+            end
+            if patch.floating then
+                resolved.floating = merge_into(resolved.floating, patch.floating)
+            end
+            if patch.paint then
+                resolved.paint = resolved.paint or {}
+                for _, op in ipairs(patch.paint) do
+                    table.insert(resolved.paint, deep_copy(op))
+                end
+            end
+        end
+    end
+    
+    if node.style_ops then
+        resolved.shared = resolved.shared or {}
+        resolved.border = resolved.border or {}
+        for _, op in ipairs(node.style_ops) do
+            local n = op.name
+            local args = op.args or {}
+            
+            if n == "bg" then
+                resolved.shared.backgroundColor = args[1]
+            elseif n == "radius" then
+                resolved.shared.cornerRadius = style.corner_radius(args[1])
+            elseif n == "radius4" then
+                resolved.shared.cornerRadius = style.corner_radius(args[1], args[2], args[3], args[4])
+            elseif n == "border_width" then
+                resolved.border.width = style.border_width(args[1])
+            elseif n == "border_width4" then
+                resolved.border.width = style.border_width(args[1], args[2], args[3], args[4])
+            elseif n == "border_between_children" then
+                resolved.border.width = resolved.border.width or style.border_width(0)
+                resolved.border.width.betweenChildren = args[1] or 0
+            elseif n == "border_color" then
+                resolved.border.color = args[1]
+            elseif n == "user_data" then
+                resolved.shared.userData = args[1]
+            end
+        end
+    end
+    
+    if node.typography_ops then
+        resolved.textConfig = resolved.textConfig or {}
+        for _, op in ipairs(node.typography_ops) do
+            local n = op.name
+            local args = op.args or {}
+            
+            if n == "color" then
+                resolved.textConfig.textColor = args[1]
+            elseif n == "font_id" then
+                resolved.textConfig.fontId = args[1]
+            elseif n == "font_size" then
+                resolved.textConfig.fontSize = args[1]
+            elseif n == "letter_spacing" then
+                resolved.textConfig.letterSpacing = args[1]
+            elseif n == "line_height" then
+                resolved.textConfig.lineHeight = args[1]
+            elseif n == "wrap" then
+                resolved.textConfig.wrapMode = args[1]
+            elseif n == "align" then
+                resolved.textConfig.textAlignment = args[1]
+            elseif n == "user_data" then
+                resolved.textConfig.userData = args[1]
+            end
+        end
+    end
+    
+    if node.paint_ops then
+        resolved.paint = resolved.paint or {}
+        for _, op in ipairs(node.paint_ops) do
+            local n = op.name
+            local args = op.args or {}
+            
+            if n == "fill" then
+                table.insert(resolved.paint, style.paint_fill(args[1]))
+            elseif n == "stroke" then
+                table.insert(resolved.paint, style.paint_stroke(args[1], args[2]))
+            elseif n == "rect" then
+                table.insert(resolved.paint, style.paint_rect(args[1], args[2], args[3], args[4]))
+            elseif n == "round_rect" then
+                table.insert(resolved.paint, style.paint_round_rect(args[1], args[2], args[3], args[4], args[5]))
+            elseif n == "circle" then
+                table.insert(resolved.paint, style.paint_circle(args[1], args[2], args[3]))
+            elseif n == "line" then
+                table.insert(resolved.paint, style.paint_line(args[1], args[2], args[3], args[4]))
+            end
+        end
+    end
+    
+    if node.states then
+        resolved.states = {}
+        for state_name, state_node in pairs(node.states) do
+            resolved.states[state_name] = ui.resolve_node(state_node)
+        end
+    end
+    
+    if node.children then
+        resolved.children = {}
+        for _, child in ipairs(node.children) do
+            table.insert(resolved.children, ui.resolve_node(child))
+        end
+    end
+    
+    return resolved
+end
+
+function ui.compileResolved(node)
+    local resolved = ui.resolve_node(node)
+    return ui.compile(resolved)
 end
 
 return ui
