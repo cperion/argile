@@ -1,6 +1,9 @@
 -- Raylib Backend Demo for Argile using Terra FFI
 -- Loads raylib via FFI and renders Argile commands
 -- Uses the same portable scene ABI as Love2D
+-- 
+-- NOTE: This demo may crash on Wayland due to GLFW/raylib limitations.
+-- Use X11/XWayland session if available, or run on non-Wayland display server.
 
 local ffi = require("ffi")
 local C = ffi.C
@@ -8,6 +11,12 @@ local C = ffi.C
 -- Load Argile FFI bindings
 dofile("build/argile_api_ffi.lua")
 local argile = ffi.load("build/libargile.so")
+
+-- C standard library functions
+ffi.cdef[[
+void* malloc(size_t size);
+void free(void* ptr);
+]]
 
 -- Raylib FFI definitions (core subset needed for demo)
 -- Note: struct names are prefixed with RL_ to avoid conflicts with Argile FFI
@@ -22,6 +31,7 @@ void EndDrawing(void);
 void ClearBackground(unsigned int color);
 int GetScreenWidth(void);
 int GetScreenHeight(void);
+double GetTime(void);
 
 // Colors (raylib specific)
 struct RL_Color { unsigned char r, g, b, a; };
@@ -275,6 +285,11 @@ local function init_argile()
         error(("API version mismatch: got %d, expected %d"):format(api_version, argile.ARGILE_API_VERSION))
     end
     
+    -- Check if scene exports are available
+    if argile.ArgileDemoGetIds == nil then
+        error("ArgileDemoGetIds not found. Scene modules may not be loaded.")
+    end
+    
     -- Get demo element IDs
     argile.ArgileDemoGetIds(demo_ids)
     
@@ -340,7 +355,7 @@ init_argile()
 local prev_time = 0
 
 while not raylib.WindowShouldClose() do
-    local current_time = ffi.cast("double", C.clock()) / ffi.C.CLOCKS_PER_SEC
+    local current_time = raylib.GetTime()
     local dt = current_time - prev_time
     prev_time = current_time
     

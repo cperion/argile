@@ -209,42 +209,29 @@ local function build_card_scene(width, height)
     
     -- Root panel (full screen background)
     argile.OpenElementWithId(root_id)
-    local root_layout = ffi.new("struct LayoutConfig")
-    root_layout.sizing = ffi.new("struct Sizing")
-    root_layout.sizing.width.type = argile.SIZING_FIXED
-    root_layout.sizing.width.size.min = width
-    root_layout.sizing.width.size.max = width
-    root_layout.sizing.height.type = argile.SIZING_FIXED
-    root_layout.sizing.height.size.min = height
-    root_layout.sizing.height.size.max = height
-    root_layout.padding = mk_padding(40, 40, 40, 40)
-    root_layout.childGap = 0
-    root_layout.childAlignment = ffi.new("struct ChildAlignment", { x = argile.ALIGN_X_LEFT, y = argile.ALIGN_Y_TOP })
-    root_layout.layoutDirection = argile.LEFT_TO_RIGHT
-    argile.SetOpenElementLayoutConfig(root_layout)
+    argile.SetOpenElementLayoutConfig(mk_layout(
+        mk_sizing_fixed(width, height),
+        mk_padding(40, 40, 40, 40),
+        0, "row"
+    ))
     argile.AttachSharedConfig(ffi.new("struct SharedConfig", {
         backgroundColor = colors.panel,
         cornerRadius = mk_corner_radius(0),
         userData = nil
     }))
     
-    -- Card container - use helper functions for proper FFI struct construction
+    -- Card container
     argile.OpenElementWithId(card_id)
-    local card_layout = ffi.new("struct LayoutConfig")
-    card_layout.sizing = ffi.new("struct Sizing")
-    card_layout.sizing.width.type = argile.SIZING_FIXED
-    card_layout.sizing.width.size.min = 440
-    card_layout.sizing.width.size.max = 440
-    card_layout.sizing.width.percent = 0
-    card_layout.sizing.height.type = argile.SIZING_FIT
-    card_layout.sizing.height.size.min = 0
-    card_layout.sizing.height.size.max = 0
-    card_layout.sizing.height.percent = 0
-    card_layout.padding = mk_padding(20, 20, 20, 20)
-    card_layout.childGap = 16
-    card_layout.childAlignment = ffi.new("struct ChildAlignment", { x = argile.ALIGN_X_LEFT, y = argile.ALIGN_Y_TOP })
-    card_layout.layoutDirection = argile.TOP_TO_BOTTOM
-    argile.SetOpenElementLayoutConfig(card_layout)
+    argile.SetOpenElementLayoutConfigForContext(ctx, ffi.new("struct LayoutConfig", {
+        sizing = ffi.new("struct Sizing", {
+            width = { type = argile.SIZING_FIXED, size = { min = 440, max = 440 }, percent = 0 },
+            height = { type = argile.SIZING_FIT, size = { min = 0, max = 0 }, percent = 0 }
+        }),
+        padding = mk_padding(20, 20, 20, 20),
+        childGap = 16,
+        childAlignment = ffi.new("struct ChildAlignment", { x = argile.ALIGN_X_LEFT, y = argile.ALIGN_Y_TOP }),
+        layoutDirection = argile.TOP_TO_BOTTOM
+    }))
     
     -- Card background
     local card_bg = colors.card_bg
