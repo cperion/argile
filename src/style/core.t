@@ -18,16 +18,29 @@ local function shallow_copy(t)
     return copy
 end
 
+local function deep_copy(t)
+    if not is_table(t) then return t end
+    local copy = {}
+    for k, v in pairs(t) do
+        if is_table(v) then
+            copy[k] = deep_copy(v)
+        else
+            copy[k] = v
+        end
+    end
+    return copy
+end
+
 local function deep_merge(a, b)
     if not is_table(a) or not is_table(b) then
-        return b
+        return deep_copy(b)
     end
-    local result = shallow_copy(a)
+    local result = deep_copy(a)
     for k, v in pairs(b) do
         if is_table(v) and is_table(result[k]) then
             result[k] = deep_merge(result[k], v)
         else
-            result[k] = shallow_copy(v)
+            result[k] = deep_copy(v)
         end
     end
     return result
@@ -56,16 +69,16 @@ end
 
 function style.StylePatch:clone()
     local copy = style.StylePatch:new()
-    copy.layout = deep_merge(nil, self.layout)
-    copy.shared = deep_merge(nil, self.shared)
-    copy.border = deep_merge(nil, self.border)
-    copy.textConfig = deep_merge(nil, self.textConfig)
-    copy.clip = deep_merge(nil, self.clip)
-    copy.aspect = deep_merge(nil, self.aspect)
-    copy.image = deep_merge(nil, self.image)
-    copy.custom = deep_merge(nil, self.custom)
-    copy.floating = deep_merge(nil, self.floating)
-    copy.paint = self.paint and { unpack(self.paint) } or nil
+    copy.layout = deep_copy(self.layout)
+    copy.shared = deep_copy(self.shared)
+    copy.border = deep_copy(self.border)
+    copy.textConfig = deep_copy(self.textConfig)
+    copy.clip = deep_copy(self.clip)
+    copy.aspect = deep_copy(self.aspect)
+    copy.image = deep_copy(self.image)
+    copy.custom = deep_copy(self.custom)
+    copy.floating = deep_copy(self.floating)
+    copy.paint = deep_copy(self.paint)
     if self.states then
         copy.states = {}
         for state, state_patch in pairs(self.states) do
