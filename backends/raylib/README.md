@@ -1,6 +1,6 @@
 # Raylib Backend for Argile
 
-Terra FFI-based backend adapter for the Argile UI library using [raylib](https://www.raylib.com/).
+Pure Terra backend adapter for the Argile UI library using [raylib](https://www.raylib.com/).
 
 ## Status
 
@@ -34,14 +34,19 @@ This demo may crash on Wayland display servers due to GLFW/raylib limitations. G
 # Build and run
 make raylib-demo
 
-# Or directly
-terra backends/raylib/demo/main.t
+# Build only (AOT executable)
+ARGILE_RAYLIB_DEMO_BUILD_ONLY=1 ./backends/raylib/build.sh
+
+# Optional JIT runner (debug only; more likely to hit Terra+Mesa LLVM collision)
+ARGILE_RAYLIB_DEMO_NO_RUN=1 terra backends/raylib/demo/main.t
 ```
 
 ## Implementation Notes
 
-- Pure Terra implementation (no C adapter code)
-- Uses FFI to load `libargile.so` and `raylib`
+- Pure Terra implementation (no C adapter code, no LuaJIT `ffi.cdef`)
+- Uses Terra C interop (`terralib.includec` / `terralib.includecstring`) to parse `raylib.h` and `build/argile_api.h`
+- Uses `terralib.linklibrary(...)` for `raylib` and `libargile.so`
+- Builds an AOT executable for normal runs (`build/argile_raylib_demo`) to avoid Terra JIT + Mesa/LLVM process conflicts
 - Implements the portable scene ABI:
   - `ArgileDemoFrameForContext(ctx, &ArgileFrameInput)`
   - `ArgileDemoGetIds(&ArgileDemoIds)`
@@ -54,7 +59,7 @@ Terra Scene (examples/scenes/*.t)
     ↓
 libargile.so (portable ABI)
     ↓
-Terra FFI Adapter (backends/raylib/demo/main.t)
+Terra Backend Adapter (backends/raylib/demo/main.t)
     ↓
 raylib (rendering, input, text)
 ```

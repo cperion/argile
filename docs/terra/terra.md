@@ -61,6 +61,14 @@
 20. [SIMD and Vector Programming](#20-simd-and-vector-programming)
 21. [Atomic Operations and Memory Ordering](#21-atomic-operations-and-memory-ordering)
 22. [Language Extensions: The Lexer/Parser Hook System](#22-language-extensions-the-lexerparser-hook-system)
+    - 22.1 How the Extension System Works
+    - 22.2 The Lexer API
+    - 22.3 Token Structure
+    - 22.4 Writing an Expression Extension
+    - 22.5 Writing a Statement Extension
+    - 22.6 Registering Extensions
+    - 22.7 Recursive Extensions
+    - 22.8 Extension Error Handling
 23. [Building DSLs](#23-building-dsls)
 24. [High-Performance Patterns via Metaprogramming](#24-high-performance-patterns-via-metaprogramming)
 25. [Error Handling Patterns](#25-error-handling-patterns)
@@ -1244,29 +1252,80 @@ Terra functions can be cast to `void* (*)(void*)` function pointers and passed d
 
 ### 22.1 How the Extension System Works
 
-Terra allows you to define custom syntax via its Lexer/Parser Hook System. A language extension is a Lua table returning `name`, `entrypoints`, `keywords`, and a parsing function (e.g., `expression` or `statement`).
+Terra allows you to define custom syntax via its Lexer/Parser Hook System. A language extension is a Lua module that returns a table with the following fields:
 
+* `name`: A string identifying the extension (for error reporting).
 * `entrypoints`: A list of strings. When Terra's parser encounters one of these strings, it pauses standard parsing and hands control over to your extension's parsing function.
 * `keywords`: A list of strings that become reserved tokens *only* while your extension is active.
-* `lex`: The lexer object passed to your parsing function, allowing you to consume tokens, look ahead, or recursively call back into Terra's parser.
+* `expression` or `statement` or `localstatement`: One or more parsing functions that handle the custom syntax.
+
+**Extension Scoping:** Language extensions are **block-scoped**. When you import an extension, its entrypoints are active only within the current lexical block (e.g., a function body or a `do ... end` block). When the block ends, the extension is automatically unimported and its entrypoints are no longer recognized.
 
 ### 22.2 The Lexer API
 
 The `lex` object exposes methods to traverse the token stream:
 
-* `lex:next()`: Consumes and returns the next token (a table with `.type` and `.value`).
-* `lex:peek()`: Returns the next token without consuming it.
-* `lex:expect(type_or_value)`: Consumes the token if it matches, otherwise throws a formatted parse error.
-* `lex:matches(type_or_value)`: Returns true if the next token matches, without consuming it.
-* `lex:nextif(type_or_value)`: Consumes and returns the token if it matches, otherwise returns `nil`.
-* `lex:terraexpr()`: Recursively calls Terra's parser to consume a valid Terra expression and returns it as an AST Quote.
-* `lex:terrastats()`: Recursively parses a list of Terra statements.
+**Token Navigation:**
+* `lex:cur()`: Returns the current token without consuming it.
+* `lex:next()`: Consumes and returns the current token, advancing to the next one.
+* `lex:lookahead()`: Returns the next token without consuming it (looks ahead one token).
 
-### 22.3 Writing an Expression Extension
+**Token Types (special singleton objects used with `expect`, `matches`, etc.):**
+* `lex.name`: Matches `<name>` tokens (identifiers).
+* `lex.string`: Matches string literal tokens.
+* `lex.number`: Matches numeric literal tokens.
+* `lex.eof`: Matches end-of-file.
+* `lex.default`: Matches any token type.
+
+**Token Consumption and Matching:**
+* `lex:expect(type_or_value)`: Consumes and returns the token if it matches, otherwise throws a formatted parse error.
+* `lex:expectmatch(opening_type, opening_token, line)`: Like `expect` but for matching bracket pairs (e.g., `)`, `}`, `]`).
+* `lex:matches(type_or_value)`: Returns true if the current token matches, without consuming it.
+* `lex:lookaheadmatches(type_or_value)`: Returns true if the next token matches, without consuming it.
+* `lex:nextif(type_or_value)`: Consumes and returns the token if it matches, otherwise returns `false`.
+
+**Embedded Code Parsing:**
+* `lex:terraexpr()`: Recursively calls Terra's parser to consume a valid Terra expression. Returns a constructor function that, when called with an environment function, returns the parsed Terra AST Quote.
+* `lex:terrastats()`: Recursively parses a list of Terra statements. Returns a constructor function.
+* `lex:luaexpr()`: Parses a Lua expression. Returns a constructor function.
+* `lex:luastats()`: Parses Lua statements. Returns a constructor function.
+
+**Variable Registration:**
+* `lex:ref(name)`: Registers that your extension will access a Lua variable with the given name from the surrounding lexical environment.
+
+**Error Handling:**
+* `lex:error(msg)`: Throws a formatted syntax error anchored to the current token's source location.
+* `lex:errorexpected(what)`: Throws an error indicating that `what` was expected.
+
+### 22.3 Token Structure
+
+Tokens returned by lexer methods are Lua tables with the following fields:
+
+* `type`: The token type string (e.g., `"<number>"`, `"<name>"`, `"<string>"`, `"<eof>"`, or a specific keyword/operator like `"+"`, `"if"`, etc.).
+* `value`: The actual value for names and strings (the identifier name or string content).
+* `valuetype`: For number tokens, the numeric type (e.g., `"uint64"`, `"double"`, `"float"`).
+* `linenumber`: The source line number where the token appears.
+* `offset`: The character offset in the source file.
+* `filename`: The source filename.
+
+Example of examining a number token:
+```lua
+local t = lex:expect(lex.number)
+print(t.value)       -- the numeric value
+print(t.valuetype)   -- "uint64", "double", etc.
+print(t.linenumber)  -- line number in source
+```
+
+### 22.4 Writing an Expression Extension
 
 An expression extension is triggered inside a Terra expression (e.g., `var x = mydsl(...)`). Your extension table defines `expression = function(self, lex) ... end`.
 
-This function must parse the custom syntax using `lex` and return a closure: `function(env_fn) return quote ... end end`. The `env_fn` allows you to access the surrounding lexical environment.
+The parsing function must:
+1. Parse the custom syntax using the `lex` object
+2. Return a **constructor function** that takes an environment function `env_fn` as its argument
+3. The constructor returns the final value (a Lua value, Terra Quote, or AST) that will be spliced into the Terra code
+
+The `env_fn` allows access to the surrounding lexical environment's variables when the constructor is called during AST finalization.
 
 Here is an example that sums a comma-separated list of numbers at compile time:
 
@@ -1285,6 +1344,7 @@ local sumlanguage = {
             until not lex:nextif(",")
         end
         lex:expect("done")
+        -- Return constructor function that will be called during AST finalization
         return function(env_fn)
             return total -- can return a Lua value or a Quote
         end
@@ -1292,25 +1352,103 @@ local sumlanguage = {
 }
 ```
 
-### 22.4 Writing a Statement Extension
+### 22.5 Writing a Statement Extension
 
 A statement extension is triggered at the statement level (e.g., inside a function body or at the top level). Your extension table defines `statement = function(self, lex) ... end`.
 
-Use an expression extension when your DSL produces a value. Use a statement extension when your DSL represents control flow, side effects, or declarations (like a custom `for` loop or a state machine transition). The returned closure must return a Quote containing a statement or list of statements. You can use `lex:terrastats()` to parse block bodies within your custom statement, seamlessly mixing custom DSL logic with standard Terra code.
+Use an expression extension when your DSL produces a value. Use a statement extension when your DSL represents control flow, side effects, or declarations (like a custom `for` loop or a state machine transition).
 
-### 22.5 Registering Extensions
+**Statement extensions must return TWO values:**
 
-To use an extension, you can pass it to `terralib.loadstring(code, nil, env, my_ext)` or register it globally by adding it to the `terralib.language.extensions` list.
+1. **Constructor function**: A function that takes `env_fn` and returns the values to be assigned. For simple statements that don't produce values, return an empty list `{}`.
+2. **Names list**: A list of variable names to assign the returned values to. Each name can be a string or a list of strings (for table access like `foo.bar`).
 
-However, the most idiomatic method is using the module system. If `my_ext.lua` returns the extension table, a Terra file can simply do `local mydsl = require("my_ext")`. Terra's customized `require` will detect that a language extension was returned and automatically activate its `entrypoints` for the remainder of that file. Multiple extensions compose gracefully as long as their `entrypoints` do not clash.
+Example of a statement extension that defines a function:
 
-### 22.6 Recursive Extensions
+```lua
+return {
+    name = "def",
+    entrypoints = {"def"},
+    statement = function(self, lex)
+        lex:expect("def")
+        local fname = lex:expect(lex.name).value
+        lex:expect("(")
+        local formal = lex:expect(lex.name).value
+        lex:expect(")")
+        local expfn = lex:luaexpr()
+        -- Return constructor function and the variable name to assign
+        return function(env_fn)
+            return function(actual)
+                local env = env_fn()
+                env[formal] = actual
+                return expfn(env)
+            end
+        end, { fname }
+    end
+}
+```
+
+You can use `lex:terrastats()` to parse block bodies within your custom statement, seamlessly mixing custom DSL logic with standard Terra code.
+
+### 22.6 Registering Extensions
+
+To use an extension, use the **`import`** keyword in your Terra code:
+
+```terra
+import "my_ext"  -- loads my_ext.lua and activates its entrypoints
+
+terra example()
+    var x = sum 1, 2, 3 done  -- using the extension's entrypoint
+    return x
+end
+```
+
+The `import` statement:
+1. Uses Lua's `require()` to load the module
+2. Automatically activates the extension's entrypoints for the current lexical block
+3. Entrypoints become reserved keywords only within the scope of the import
+
+**Extension files** must return a language definition table. Place your extension in a file like `my_ext.lua`:
+
+```lua
+-- my_ext.lua
+return {
+    name = "my_ext",
+    entrypoints = {"sum"},
+    keywords = {"done"},
+    expression = function(self, lex)
+        -- parsing logic here
+    end
+}
+```
+
+**Block Scoping:** Extensions are block-scoped. Entrypoints are only active within the block where `import` is called:
+
+```terra
+terra foo()
+    import "my_ext"
+    var x = sum 1, 2 done  -- works: entrypoint is active
+    
+    if true then
+        var y = sum 3, 4 done  -- works: nested block inherits extensions
+    end
+end
+
+terra bar()
+    -- Entrypoints from "my_ext" are NOT active here
+    -- var x = sum 1, 2 done  -- ERROR: "sum" not recognized
+end
+```
+
+Multiple extensions compose gracefully as long as their `entrypoints` do not clash.
+
+### 22.7 Recursive Extensions
 
 For complex DSLs (like HTML templating or UI layouts), extensions often need to parse nested blocks of their own syntax. You achieve this by writing a recursive descent parser using the `lex` methods.
 
-When your parser encounters a nesting construct, you call your own parsing function recursively until you hit a terminator token. To allow standard Terra expressions inside your DSL (e.g., for dynamic attributes), you interleave calls to `lex:terraexpr()`. The result is typically a nested Lua table (an AST) representing the DSL, which your `env_fn` closure then transforms into a deeply nested Terra Quote.
+When your parser encounters a nesting construct, you call your own parsing function recursively until you hit a terminator token. To allow standard Terra expressions inside your DSL (e.g., for dynamic attributes), interleave calls to `lex:terraexpr()`. The result is typically a nested Lua table (an AST) representing the DSL, which your constructor function then transforms into a deeply nested Terra Quote when called with the environment.
 
-### 22.7 Extension Error Handling
+### 22.8 Extension Error Handling
 
 When writing parsers, you must handle invalid syntax gracefully. The `lex` object tracks source locations.
 
