@@ -182,6 +182,28 @@ for _, name in ipairs(sorted_keys(export_source, function(_, v) return terralib.
     exports[name] = export_source[name]
 end
 
+-- Example scene exports from examples/scenes/
+-- These are backend-neutral scene functions used by Love2D, raylib, and SDL3 demos
+local scene_modules = {
+    "examples/scenes/v3_demo_scene",
+    "examples/scenes/v3_conformance_scene",
+    "examples/scenes/v3_state_matrix_scene",
+}
+
+for _, module_path in ipairs(scene_modules) do
+    local ok, scene_exports = pcall(require, module_path)
+    if ok and type(scene_exports) == "table" then
+        for _, name in ipairs(sorted_keys(scene_exports, function(_, v) return terralib.type(v) == "terrafunction" end)) do
+            if exports[name] ~= nil then
+                error("duplicate export name from scene module " .. module_path .. ": " .. tostring(name))
+            end
+            exports[name] = scene_exports[name]
+        end
+    elseif not ok then
+        io.stderr:write("warning: could not load scene module " .. module_path .. ": " .. tostring(scene_exports) .. "\n")
+    end
+end
+
 local want_forward = {}
 local want_complete = {}
 for _, name in ipairs(sorted_keys(exports)) do
@@ -220,6 +242,73 @@ while changed do
             changed = true
         end
     end
+end
+
+-- LuaJIT FFI often needs concrete definitions for structs referenced via
+-- pointers inside exported structs (for example `PaintConfig.ops -> PaintOp*`)
+-- when client code indexes into those buffers. Promote pointer-target structs
+-- to complete definitions transitively.
+local function promote_pointer_target_structs()
+    local did_change = false
+    local opaque_pointer_targets = {
+        Context = true, -- keep runtime context opaque in C/FFI surface
+    }
+
+    local function consider_type(t)
+        if t == nil then return end
+        while t:isarray() do
+            t = t.type
+        end
+        if t:ispointer() then
+            local base = t.type
+            while base:isarray() do
+                base = base.type
+            end
+            if base:isstruct() then
+                local s = struct_name(base)
+                if opaque_pointer_targets[s] then
+                    return
+                end
+                want_forward[s] = base
+                if want_complete[s] == nil then
+                    want_complete[s] = base
+                    did_change = true
+                end
+            end
+        end
+    end
+
+    -- Public pointer-only structs used in exported function signatures (e.g.
+    -- ArgileFrameInput*) need full definitions for LuaJIT FFI allocation/access.
+    for _, name in ipairs(sorted_keys(exports)) do
+        local fn = exports[name]
+        local ftype = fn:gettype()
+        consider_type(ftype.returntype)
+        for _, p in ipairs(ftype.parameters) do
+            consider_type(p)
+        end
+    end
+
+    for _, st in pairs(want_complete) do
+        local ok = pcall(function() st:complete() end)
+        if ok and st.entries ~= nil then
+            for _, entry in ipairs(st.entries) do
+                if field_is_union(entry) then
+                    for _, uentry in ipairs(entry) do
+                        consider_type(field_type(uentry))
+                    end
+                else
+                    consider_type(field_type(entry))
+                end
+            end
+        end
+    end
+
+    return did_change
+end
+
+while promote_pointer_target_structs() do
+    -- repeat until closure over pointer-target struct fields stabilizes
 end
 
 local forward_names = sorted_keys(want_forward)

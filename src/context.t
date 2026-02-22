@@ -111,7 +111,10 @@ ui.Context = struct {
     warningDuplicateId : bool,
     warningPercentageOverOne : bool,
     warningFloatingParentNotFound : bool,
-    maxElementsExceeded : bool
+    maxElementsExceeded : bool,
+    -- Portability: per-context measure text function
+    measureTextFunction : MeasureTextFnType,
+    measureTextUserData : &opaque
 }
 
 local ContextPtr = &ui.Context
@@ -198,6 +201,10 @@ terra ui.Context:initialize(arena: &ui.Arena, maxElements: int32) : bool
     self.warningDuplicateId = false
     self.warningPercentageOverOne = false
     self.warningFloatingParentNotFound = false
+    -- Seed new contexts from the current default measure callback so the
+    -- legacy global setter still affects subsequently created contexts.
+    self.measureTextFunction = ui.measureTextFunction
+    self.measureTextUserData = ui.measureTextUserData
     
     if not self.layoutElements:allocate(maxElements, arena) then return false end
     if not self.renderCommands:allocate(maxElements, arena) then return false end
@@ -435,7 +442,13 @@ end
 
 terra ui.Context:measureTextCached(text: &config.String, textCfg: &config.TextConfig) : &layout.MeasureTextCacheItem
     if text == nil or textCfg == nil then return nil end
-    if ui.measureTextFunction == nil then
+    var measureTextFn = self.measureTextFunction
+    var measureTextUserData = self.measureTextUserData
+    if measureTextFn == nil then
+        measureTextFn = ui.measureTextFunction
+        measureTextUserData = ui.measureTextUserData
+    end
+    if measureTextFn == nil then
         if not self.warningTextMeasurementFunctionNotSet then
             self.warningTextMeasurementFunctionNotSet = true
             ui.ReportError(config.ERROR_TYPE_TEXT_MEASUREMENT_FUNCTION_NOT_PROVIDED,
@@ -526,7 +539,7 @@ terra ui.Context:measureTextCached(text: &config.String, textCfg: &config.TextCo
     oneChar.length = 1
     oneChar.chars = " "
     oneChar.baseChars = " "
-    var spaceWidth = ui.measureTextFunction(oneChar, textCfg, ui.measureTextUserData).width
+    var spaceWidth = measureTextFn(oneChar, textCfg, measureTextUserData).width
 
     var start: int32 = 0
     var e: int32 = 0
@@ -556,7 +569,7 @@ terra ui.Context:measureTextCached(text: &config.String, textCfg: &config.TextCo
                 s.length = length
                 s.chars = &text.chars[start]
                 s.baseChars = text.chars
-                dimensions = ui.measureTextFunction(s, textCfg, ui.measureTextUserData)
+                dimensions = measureTextFn(s, textCfg, measureTextUserData)
             end
             if dimensions.width > measured.minWidth then
                 measured.minWidth = dimensions.width
@@ -606,7 +619,7 @@ terra ui.Context:measureTextCached(text: &config.String, textCfg: &config.TextCo
         s.length = e - start
         s.chars = &text.chars[start]
         s.baseChars = text.chars
-        var dimensions = ui.measureTextFunction(s, textCfg, ui.measureTextUserData)
+        var dimensions = measureTextFn(s, textCfg, measureTextUserData)
         var w: layout.MeasuredWord
         w.startOffset = start
         w.length = e - start
@@ -1192,7 +1205,13 @@ terra ui.Context:openTextElement(text: config.String, textConfig: &config.TextCo
         var textMinWidth: float = 0
         
         if textConfig ~= nil then
-            if ui.measureTextFunction ~= nil then
+            var measureTextFn = self.measureTextFunction
+            var measureTextUserData = self.measureTextUserData
+            if measureTextFn == nil then
+                measureTextFn = ui.measureTextFunction
+                measureTextUserData = ui.measureTextUserData
+            end
+            if measureTextFn ~= nil then
                 var cached = self:measureTextCached(&text, textConfig)
                 if cached ~= nil then
                     textData.preferredDimensions = cached.unwrappedDimensions
@@ -1202,7 +1221,7 @@ terra ui.Context:openTextElement(text: config.String, textConfig: &config.TextCo
                     slice.length = text.length
                     slice.chars = text.chars
                     slice.baseChars = text.chars
-                    textData.preferredDimensions = ui.measureTextFunction(slice, textConfig, ui.measureTextUserData)
+                    textData.preferredDimensions = measureTextFn(slice, textConfig, measureTextUserData)
                     textMinWidth = textData.preferredDimensions.width
                 end
 
@@ -1433,6 +1452,11 @@ end
 terra ui.SetMeasureTextFunction(measureTextFunction: MeasureTextFnType, userData: &opaque)
     ui.measureTextFunction = measureTextFunction
     ui.measureTextUserData = userData
+    var ctx = ui.GetCurrentContext()
+    if ctx ~= nil then
+        ctx.measureTextFunction = measureTextFunction
+        ctx.measureTextUserData = userData
+    end
 end
 
 terra ui.SetErrorHandler(errorHandlerFunction: ErrorHandlerFnType, userData: &opaque)
@@ -1874,7 +1898,13 @@ terra ui.Context:wrapTextElements()
                             oneChar.length = 1
                             oneChar.chars = " "
                             oneChar.baseChars = " "
-                            var spaceWidth = ui.measureTextFunction(oneChar, textCfg, ui.measureTextUserData).width
+                            var measureTextFn = self.measureTextFunction
+                            var measureTextUserData = self.measureTextUserData
+                            if measureTextFn == nil then
+                                measureTextFn = ui.measureTextFunction
+                                measureTextUserData = ui.measureTextUserData
+                            end
+                            var spaceWidth = measureTextFn(oneChar, textCfg, measureTextUserData).width
 
                             var wordIndex = measureTextCacheItem.measuredWordsStartIndex
                             while wordIndex ~= -1 do
@@ -3544,6 +3574,31 @@ end
 
 terra ui.GetRenderCommandAt(index: int32) : config.RenderCommand
     return ui.GetRenderCommandAtForContext(ui.GetCurrentContext(), index)
+end
+
+-- ============================================
+-- PORTABILITY: ForContext Text Measurement APIs
+-- ============================================
+
+terra ui.SetMeasureTextFunctionForContext(ctx: &ui.Context, measureTextFunction: MeasureTextFnType, userData: &opaque)
+    if ctx == nil then return end
+    ctx.measureTextFunction = measureTextFunction
+    ctx.measureTextUserData = userData
+end
+
+terra ui.ResetMeasureTextCacheForContext(ctx: &ui.Context)
+    if ctx == nil then return end
+    ctx.measureTextHashMapInternal.length = 0
+    ctx.measureTextHashMapInternalFreeList.length = 0
+    ctx.measuredWords.length = 0
+    ctx.measuredWordsFreeList.length = 0
+    ctx.measureTextHashMap.length = ctx.measureTextHashMap.capacity
+    var i: int32 = 0
+    while i < ctx.measureTextHashMap.length do
+        ctx.measureTextHashMap.internalArray[i] = 0
+        i = i + 1
+    end
+    ctx.measureTextHashMapInternal.length = 1
 end
 
 return ui

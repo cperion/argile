@@ -1,5 +1,6 @@
 local ui = {}
 local string_mod = require("src.string")
+local hash = require("src.hash")
 
 ui.String = string_mod.String
 ui.StringSlice = string_mod.StringSlice
@@ -388,6 +389,35 @@ ui.ElementConfigUnion = struct {
 ui.ElementConfig = struct {
     configType : ui.ElementConfigType,
     config : ui.ElementConfigUnion
+}
+
+-- ============================================
+-- PORTABILITY: Backend-Neutral Frame Input
+-- ============================================
+
+ui.ArgileFrameInput = struct {
+    width : float,
+    height : float,
+    pointer_x : float,
+    pointer_y : float,
+    pointer_down : bool,
+    pointer_pressed : bool,
+    pointer_released : bool,
+    scroll_delta_x : float,
+    scroll_delta_y : float,
+    delta_time : float
+}
+
+ui.ArgileFrameStateFlags = struct {
+    focused : bool,
+    selected : bool,
+    disabled : bool
+}
+
+ui.ArgileDemoIds = struct {
+    card : hash.ElementId,
+    title : hash.ElementId,
+    body : hash.ElementId
 }
 
 return ui
