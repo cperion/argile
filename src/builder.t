@@ -372,6 +372,9 @@ local function validate_runtime_states(node)
             if not node.id then
                 error("argile: state '" .. state_name .. "' requires element to have an id")
             end
+            if type(node.id) ~= "string" then
+                error("argile: state '" .. state_name .. "' currently requires a string id")
+            end
         end
     end
 end
