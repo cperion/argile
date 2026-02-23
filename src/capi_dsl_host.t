@@ -1,5 +1,6 @@
 local Ast = require("src/capi_dsl_ast")
 local Compile = require("src/capi_dsl_compile")
+local HostCompiler = require("src/capi_dsl_host_compiler")
 
 local M = {}
 
@@ -17,6 +18,7 @@ M.CAPI_DSL_AST_FEATURE_RECIPES = 16
 M.CAPI_DSL_AST_FEATURE_COMPILE = 32
 M.CAPI_DSL_AST_FEATURE_SOURCE_META = 64
 M.CAPI_DSL_AST_FEATURE_DIAGNOSTICS = 128
+M.CAPI_DSL_AST_FEATURE_COMPILE_CACHE = 256
 
 function M.CapiDslAstGetFeatureFlags()
     return M.CAPI_DSL_AST_FEATURE_CORE
@@ -27,6 +29,7 @@ function M.CapiDslAstGetFeatureFlags()
         + M.CAPI_DSL_AST_FEATURE_COMPILE
         + M.CAPI_DSL_AST_FEATURE_SOURCE_META
         + M.CAPI_DSL_AST_FEATURE_DIAGNOSTICS
+        + M.CAPI_DSL_AST_FEATURE_COMPILE_CACHE
 end
 
 function M.CapiDslAstHasFeature(flag)
@@ -100,6 +103,13 @@ end
 for k, v in pairs(Compile) do
     if M[k] ~= nil then
         error("argile: duplicate host AST compile API symbol '" .. tostring(k) .. "'")
+    end
+    M[k] = v
+end
+
+for k, v in pairs(HostCompiler) do
+    if M[k] ~= nil then
+        error("argile: duplicate host AST host-compiler API symbol '" .. tostring(k) .. "'")
     end
     M[k] = v
 end

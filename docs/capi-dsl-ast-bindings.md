@@ -53,6 +53,7 @@ The returned table aggregates:
 
 - AST builder functions (`src/capi_dsl_ast.t`)
 - host-side compile functions (`src/capi_dsl_compile.t`)
+- host compiler context/cache functions (`src/capi_dsl_host_compiler.t`)
 - host API feature flags (`src/capi_dsl_host.t`)
 
 ## Feature Flags (Host AST API)
@@ -65,6 +66,7 @@ Use capability checks instead of guessing what the host API supports:
 - `CAPI_DSL_AST_FEATURE_THEMES`
 - `CAPI_DSL_AST_FEATURE_RECIPES`
 - `CAPI_DSL_AST_FEATURE_COMPILE`
+- `CAPI_DSL_AST_FEATURE_COMPILE_CACHE`
 - `CAPI_DSL_AST_FEATURE_SOURCE_META`
 - `CAPI_DSL_AST_FEATURE_DIAGNOSTICS`
 
@@ -362,6 +364,47 @@ Builder diagnostics helpers:
 - builder error code constants:
   - `CAPI_DSL_AST_BUILDER_ERR_NONE`
   - `CAPI_DSL_AST_BUILDER_ERR_CALL`
+
+## Host Compiler Contexts and Compile Cache (Host-Side)
+
+For the chosen Option 1 shipping model, wrappers should compile through an explicit host compiler context and cache results across frames/reloads.
+
+Context lifecycle:
+
+- `CapiDslAstHostCreateCompilerContext([options])`
+- `CapiDslAstHostDestroyCompilerContext(ctx)`
+- `CapiDslAstHostResetCompilerContext(ctx)`
+
+Cache operations:
+
+- `CapiDslAstHostGetCompileCacheStats(ctx)` -> `{ hits, misses, quote_entries, function_entries, render_function_entries, total_entries }`
+- `CapiDslAstHostClearCompileCache(ctx)`
+- `CapiDslAstHostInvalidateCompileCacheKey(ctx, key)`
+
+Cached compile entrypoints:
+
+- `CapiDslAstHostCompileProgramQuoteCached(ctx, key, builder, program, env_fn, registry?)`
+- `CapiDslAstHostCompileProgramFunctionCached(ctx, key, builder, name, program, env_fn, registry?)`
+- `CapiDslAstHostCompileProgramRenderFunctionCached(ctx, key, builder, name, program, env_fn, registry?)`
+- `CapiDslAstHostTryCompileProgram*Cached(...)` variants
+
+Cache key types accepted today:
+
+- `string`
+- `number`
+- `boolean`
+
+Use a stable key derived from your AST + compile options/environment.
+
+Host compiler-context diagnostics:
+
+- `CapiDslAstHostGetLastCompilerContextError(ctx)` -> `{ code, message, api }`
+- `CapiDslAstHostClearLastCompilerContextError(ctx)`
+- error code constants:
+  - `CAPI_DSL_AST_HOST_COMPILER_ERR_NONE`
+  - `CAPI_DSL_AST_HOST_COMPILER_ERR_INVALID_CONTEXT`
+  - `CAPI_DSL_AST_HOST_COMPILER_ERR_INVALID_ARGUMENT`
+  - `CAPI_DSL_AST_HOST_COMPILER_ERR_COMPILE`
 
 ## Error Model (Current Host API)
 

@@ -6,6 +6,10 @@ local C = terralib.includecstring [[
 local ui = require("src.init")
 local AstCapi = require("src/capi_dsl_host")
 
+cached_card_render = nil
+cached_card_render_alias = nil
+cached_card_render_after_invalidate = nil
+
 do
     local flags = AstCapi.CapiDslAstGetFeatureFlags()
     if type(flags) ~= "number" or flags <= 0 then
@@ -16,6 +20,9 @@ do
     end
     if not AstCapi.CapiDslAstHasFeature(AstCapi.CAPI_DSL_AST_FEATURE_COMPILE) then
         error("expected COMPILE feature flag")
+    end
+    if not AstCapi.CapiDslAstHasFeature(AstCapi.CAPI_DSL_AST_FEATURE_COMPILE_CACHE) then
+        error("expected COMPILE_CACHE feature flag")
     end
 end
 
@@ -299,6 +306,133 @@ do
     end)
     if not ok_valid then
         error("expected valid variant invoke to compile")
+    end
+end
+
+do
+    local cache_builder, cache_program = build_program_with_handles()
+    local host_ctx = AstCapi.CapiDslAstHostCreateCompilerContext()
+    local stats0 = AstCapi.CapiDslAstHostGetCompileCacheStats(host_ctx)
+    if stats0.total_entries ~= 0 or stats0.hits ~= 0 or stats0.misses ~= 0 then
+        error("expected empty compiler cache context stats")
+    end
+
+    local fn1, hit1 = AstCapi.CapiDslAstHostCompileProgramRenderFunctionCached(
+        host_ctx,
+        "render:main-card",
+        cache_builder,
+        "cached_card_render",
+        cache_program,
+        function() return {} end
+    )
+    if terralib.type(fn1) ~= "terrafunction" then
+        error("expected Terra render function from cached compile")
+    end
+    if hit1 ~= false then
+        error("expected first cached render compile to be a miss")
+    end
+
+    local fn2, hit2 = AstCapi.CapiDslAstHostCompileProgramRenderFunctionCached(
+        host_ctx,
+        "render:main-card",
+        cache_builder,
+        "cached_card_render_alias",
+        cache_program,
+        function() return {} end
+    )
+    if hit2 ~= true then
+        error("expected second cached render compile to be a hit")
+    end
+    if fn1 ~= fn2 then
+        error("expected cached render compile to reuse function object")
+    end
+    if _G.cached_card_render_alias ~= fn1 then
+        error("expected cache hit to rebind requested global function name")
+    end
+
+    local q1, qhit1 = AstCapi.CapiDslAstHostCompileProgramQuoteCached(
+        host_ctx,
+        "quote:main-card",
+        cache_builder,
+        cache_program,
+        function() return {} end
+    )
+    local q2, qhit2 = AstCapi.CapiDslAstHostCompileProgramQuoteCached(
+        host_ctx,
+        "quote:main-card",
+        cache_builder,
+        cache_program,
+        function() return {} end
+    )
+    if qhit1 ~= false or qhit2 ~= true then
+        error("expected quote cache miss then hit")
+    end
+    if q1 ~= q2 then
+        error("expected cached quote to reuse same object")
+    end
+
+    local stats1 = AstCapi.CapiDslAstHostGetCompileCacheStats(host_ctx)
+    if stats1.total_entries < 2 then
+        error("expected compiler cache entries after cached compiles")
+    end
+    if stats1.hits < 2 then
+        error("expected compiler cache hits to increment")
+    end
+    if stats1.misses < 2 then
+        error("expected compiler cache misses to increment")
+    end
+
+    AstCapi.CapiDslAstHostInvalidateCompileCacheKey(host_ctx, "render:main-card")
+    local fn3, hit3 = AstCapi.CapiDslAstHostCompileProgramRenderFunctionCached(
+        host_ctx,
+        "render:main-card",
+        cache_builder,
+        "cached_card_render_after_invalidate",
+        cache_program,
+        function() return {} end
+    )
+    if hit3 ~= false then
+        error("expected cache miss after invalidation")
+    end
+    if terralib.type(fn3) ~= "terrafunction" then
+        error("expected Terra render function after invalidation recompile")
+    end
+
+    local ok_try, fn_try, was_hit_try, err_try = AstCapi.CapiDslAstHostTryCompileProgramRenderFunctionCached(
+        host_ctx,
+        {},
+        cache_builder,
+        "bad_cache_key",
+        cache_program,
+        function() return {} end
+    )
+    if ok_try or fn_try ~= nil or was_hit_try ~= false then
+        error("expected invalid cache key try-compile to fail")
+    end
+    if type(err_try) ~= "string" or not err_try:find("cache_key", 1, true) then
+        error("expected invalid cache key error")
+    end
+    local host_diag = AstCapi.CapiDslAstHostGetLastCompilerContextError(host_ctx)
+    if host_diag.code ~= AstCapi.CAPI_DSL_AST_HOST_COMPILER_ERR_INVALID_ARGUMENT then
+        error("expected host compiler context invalid argument diagnostic code")
+    end
+    if host_diag.api ~= "CapiDslAstHostTryCompileProgramRenderFunctionCached" then
+        error("expected host compiler context diagnostic api name")
+    end
+
+    AstCapi.CapiDslAstHostClearCompileCache(host_ctx)
+    local stats2 = AstCapi.CapiDslAstHostGetCompileCacheStats(host_ctx)
+    if stats2.total_entries ~= 0 then
+        error("expected cleared compiler cache entries")
+    end
+
+    AstCapi.CapiDslAstHostDestroyCompilerContext(host_ctx)
+    AstCapi.CapiDslAstDestroyBuilder(cache_builder)
+    local ok_stale = pcall(function()
+        AstCapi.CapiDslAstHostGetCompileCacheStats(host_ctx)
+    end)
+    if ok_stale then
+        error("expected destroyed compiler context to fail")
     end
 end
 

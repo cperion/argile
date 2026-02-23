@@ -17,8 +17,10 @@
   - host-side handle-based AST builder (`src/capi_dsl_ast.t`)
 - host-side compile entrypoints split into `src/capi_dsl_compile.t`
 - host API aggregator (`src/capi_dsl_host.t`) exposed via `ui.GetDslAstApi()`
+- host compiler context + compile cache API (`src/capi_dsl_host_compiler.t`)
 - host-side compile diagnostics helpers (`TryCompile*`, last compile error)
 - host-side builder diagnostics helpers (`TryCall`, last builder error)
+- host compiler-context diagnostics and cache stats/invalidation helpers
 - source metadata/span attachment APIs on AST objects
   - parser-vs-host-AST conformance test (`tests/test_dsl_ast_parity.t`)
   - bindings-author guide + reference wrapper example
