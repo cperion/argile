@@ -149,6 +149,13 @@ function M.Symbol(name, span)
     })
 end
 
+-- Splice: [expression] escape in argile body — injects a pre-built V2 subtree
+function M.Splice(expr_fn, span)
+    return merge(M.Node("Splice", span), {
+        expr_fn = expr_fn,       -- function(env_fn) -> V2 node or list of V2 nodes
+    })
+end
+
 -- ============================================================================
 -- Validation Helpers
 -- ============================================================================

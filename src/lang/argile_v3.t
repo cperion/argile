@@ -160,10 +160,19 @@ local function parse_v3_content_item(lex, where)
         return parse_v3_node_decl(lex, "el")
     elseif matches_word(lex, "text") then
         return parse_v3_node_decl(lex, "text")
+    elseif lex:matches("[") then
+        -- [expression] splice: inject a pre-built V2 subtree
+        local span = Span.SpanFromLexer(lex)
+        lex:expect("[")
+        local expr = lex:luaexpr()
+        lex:expect("]")
+        return AST.Splice(function(environment_function)
+            return expr(environment_function())
+        end, span)
     elseif is_component_invocation and is_component_invocation(lex) then
         return parse_v3_component_invoke(lex)
     end
-    lex:error("argile v3: expected el, text, component invocation, or end in " .. where)
+    lex:error("argile v3: expected el, text, [splice], component invocation, or end in " .. where)
 end
 
 local function starts_v3_node_body(lex)
@@ -255,10 +264,20 @@ end
 -- V3 component invocation args use named syntax and allow bare symbolic values
 -- like `tone = primary` and `size = md`. These are parsed as V3 symbols rather
 -- than Lua expressions so they can be validated deterministically in lowering.
+--
+-- For non-variant args (e.g. `theme = dark` where `dark` is a Lua variable),
+-- the bare name is still parsed as a Symbol but we also call lex:ref(name)
+-- to ensure the name is captured in the lexical environment. The lowering
+-- phase resolves non-variant Symbols from the environment.
 local function parse_invoke_arg_value_fn(lex)
     if lex:matches(lex.name) and (lex:lookaheadmatches(",") or lex:lookaheadmatches(")")) then
         local span = Span.SpanFromLexer(lex)
         local name = lex:next().value
+        -- Register the name for lexical environment capture so that
+        -- non-variant args can be resolved from the caller's scope.
+        if lex.ref then
+            lex:ref(name)
+        end
         return constant_value_fn(AST.Symbol(name, span))
     end
     return parse_value_fn(lex, nil)
@@ -368,6 +387,25 @@ local function build_component_handle(decl, decl_env)
 end
 
 local function parse_use_expr_fn(lex)
+    -- use() accepts either:
+    --   1. A dotted path to a pre-computed StylePatch value: use(my_patch)
+    --   2. A dotted path + named-arg recipe call: use(theme.recipe(name = val))
+    --   3. A general Lua expression: use(recipes.button(dark, { tone = "primary" }))
+    --
+    -- We try the V3-specific grammar first (path + optional named-arg call).
+    -- If the grammar doesn't fit (e.g. positional args), we fall back to
+    -- parsing the entire content as a generic Lua expression.
+
+    -- Check if it starts with a name (could be a V3 path or a Lua expr)
+    if not lex:matches(lex.name) then
+        -- Starts with something other than a name — must be a Lua expression
+        local expr = lex:luaexpr()
+        return function(environment_function)
+            return expr(environment_function())
+        end
+    end
+
+    -- Try to parse a dotted path
     local path = {}
     path[#path + 1] = read_word_like_name(lex, "use target")
     while lex:nextif(".") do
@@ -394,7 +432,7 @@ local function parse_use_expr_fn(lex)
         return target
     end
     
-    -- use(patch_value)
+    -- use(patch_value) — no call, just a path to a pre-computed value
     if not lex:matches("(") then
         return function(environment_function)
             local target = resolve_path(environment_function)
@@ -405,10 +443,71 @@ local function parse_use_expr_fn(lex)
         end
     end
     
-    -- use(theme.recipe(named = args))
+    -- Peek ahead: is this a named-arg recipe call `recipe(name = ...)` or
+    -- a generic Lua function call `recipe(expr, ...)`?
+    -- Named-arg form requires: "(" <name> "=" ...
+    -- We check lookahead to distinguish the two cases.
+    local is_named_arg_call = false
+    if lex:matches("(") then
+        -- Look for pattern: ( name =
+        -- lex:cur() is "(", lookahead is the next token
+        -- We can't easily double-lookahead, so check if after "(" comes
+        -- a name token. If so, speculatively check for "=".
+        -- Save state: unfortunately Terra lexer doesn't support save/restore,
+        -- so we check the common patterns:
+        --   - "(" ")" -> call with no args (could be either)
+        --   - "(" <name> "=" -> named arg call
+        --   - "(" <name> "," -> positional arg call  
+        --   - "(" <name> ")" -> single positional arg or named with no =
+        --   - anything else -> generic Lua expression
+        --
+        -- Actually, the simplest approach: named-arg requires the pattern
+        -- name "=", so we check if lookahead is a name and the token after
+        -- is "=". Terra lexer only supports single lookahead, so we need a
+        -- different strategy.
+        --
+        -- Practical heuristic: if the next token after "(" is ")" it's a
+        -- no-arg call. If it's <name> followed by "=", it's named-arg.
+        -- Otherwise, fall back to generic Lua expression for the entire call.
+        --
+        -- Since we already consumed the path tokens, we'll reconstruct the
+        -- full expression as a Lua function call using the resolved path.
+        
+        -- For empty calls and named-arg calls, use V3 grammar
+        -- For everything else, evaluate as path(...) using a Lua expression parse
+        if lex:lookaheadmatches(")") then
+            -- recipe() — no args
+            is_named_arg_call = true
+        else
+            -- We need to check: after "(", is there a <name> followed by "="?
+            -- Terra lexer limitation: only 1-token lookahead.
+            -- We'll consume "(" and check the pattern.
+            -- If it's named-arg, proceed. If not, parse the rest as Lua exprs.
+            
+            -- Don't consume yet — we'll handle below
+            is_named_arg_call = false  -- assume generic, override if named-arg detected
+        end
+    end
+    
+    -- Strategy: consume "(" and look at what follows
     lex:expect("(")
-    local args = {}
-    if not lex:matches(")") then
+    
+    -- Empty call: recipe()
+    if lex:matches(")") then
+        lex:expect(")")
+        return function(environment_function)
+            local target = resolve_path(environment_function)
+            if type(target) ~= "function" then
+                error("argile v3: use target '" .. table.concat(path, ".") .. "' is not callable")
+            end
+            return target({})
+        end
+    end
+    
+    -- Check for named-arg pattern: <name> "="
+    if lex:matches(lex.name) and lex:lookaheadmatches("=") then
+        -- Named-arg recipe call: use(path.recipe(name = val, ...))
+        local args = {}
         repeat
             local arg_name = read_word_like_name(lex, "recipe argument name")
             if args[arg_name] ~= nil then
@@ -417,7 +516,29 @@ local function parse_use_expr_fn(lex)
             lex:expect("=")
             args[arg_name] = parse_invoke_arg_value_fn(lex)
         until not lex:nextif(",")
+        lex:expect(")")
+        
+        return function(environment_function)
+            local target = resolve_path(environment_function)
+            if type(target) ~= "function" then
+                error("argile v3: use target '" .. table.concat(path, ".") .. "' is not callable")
+            end
+            local opts = {}
+            for name, arg_fn in pairs(args) do
+                opts[name] = normalize_runtime_value(arg_fn(environment_function))
+            end
+            return target(opts)
+        end
     end
+    
+    -- Generic positional-arg call: use(path.fn(expr1, expr2, ...))
+    -- We've already consumed "(" and the first token is not <name> "=".
+    -- Parse positional arguments as Lua expressions.
+    local pos_args = {}
+    repeat
+        local expr = lex:luaexpr()
+        pos_args[#pos_args + 1] = expr
+    until not lex:nextif(",")
     lex:expect(")")
     
     return function(environment_function)
@@ -425,11 +546,12 @@ local function parse_use_expr_fn(lex)
         if type(target) ~= "function" then
             error("argile v3: use target '" .. table.concat(path, ".") .. "' is not callable")
         end
-        local opts = {}
-        for name, arg_fn in pairs(args) do
-            opts[name] = normalize_runtime_value(arg_fn(environment_function))
+        local env = environment_function()
+        local evaluated = {}
+        for i, expr_fn in ipairs(pos_args) do
+            evaluated[i] = expr_fn(env)
         end
-        return target(opts)
+        return target(unpack(evaluated))
     end
 end
 
@@ -741,6 +863,15 @@ parse_v3_node_body = function(lex, node)
             table.insert(node.children, parse_v3_node_decl(lex, "el"))
         elseif matches_word(lex, "text") then
             table.insert(node.children, parse_v3_node_decl(lex, "text"))
+        elseif lex:matches("[") then
+            -- [expression] splice: inject pre-built V2 subtree(s)
+            local span = Span.SpanFromLexer(lex)
+            lex:expect("[")
+            local expr = lex:luaexpr()
+            lex:expect("]")
+            table.insert(node.children, AST.Splice(function(environment_function)
+                return expr(environment_function())
+            end, span))
         elseif is_component_invocation(lex) then
             table.insert(node.children, parse_v3_component_invoke(lex))
         else

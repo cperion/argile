@@ -42,6 +42,7 @@ end
 terra ui.HashString(key : ui.String, seed : uint32) : ui.ElementId
     var hash = seed
     
+    -- Note: Terra for loops are exclusive at the upper bound (0 to length-1)
     for i = 0, key.length do
         hash = hash + [uint32](key.chars[i])
         hash = hash + (hash << 10)

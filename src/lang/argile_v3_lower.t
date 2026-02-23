@@ -72,12 +72,45 @@ local function eval_expr_fn(expr_fn, env_fn)
     return normalize_value(expr_fn(env_fn))
 end
 
+-- Resolve a Symbol AST node: if the arg is a declared variant, return the
+-- symbol name as a plain string; otherwise look up the name in the caller's
+-- environment so that `theme = dark` passes the actual table, not "dark".
+local function resolve_symbol(value, is_variant, env_fn)
+    if not AST.IsKind(value, "Symbol") then
+        return value
+    end
+    if is_variant then
+        return value.name  -- variant values are always plain strings
+    end
+    -- Non-variant bare name: resolve from caller environment
+    local env = env_fn and env_fn() or nil
+    local resolved = env and env[value.name] or nil
+    if resolved == nil then
+        resolved = rawget(_G, value.name)
+    end
+    if resolved == nil then
+        Span.Raise(value._span,
+            "cannot resolve symbol '" .. value.name .. "' — not found in scope")
+    end
+    return resolved
+end
+
 local function build_component_env_fn(component, invoke, parent_env_fn)
     -- Evaluate invocation args in caller environment, then bind them as the
     -- component's param object(s) for template expression evaluation.
+    --
+    -- Variant args have their bare Symbols normalized to strings; non-variant
+    -- args have Symbols resolved from the caller's lexical environment so
+    -- that `theme = dark` passes the actual Lua table, not the string "dark".
+    local declared_variants = {}
+    for _, variant in pairs(component.variants) do
+        declared_variants[variant.name] = true
+    end
+
     local props = {}
     for arg_name, arg_expr in pairs(invoke.args) do
-        props[arg_name] = eval_expr_fn(arg_expr, parent_env_fn)
+        local raw = arg_expr(parent_env_fn)
+        props[arg_name] = resolve_symbol(raw, declared_variants[arg_name], parent_env_fn)
     end
     
     return function()
@@ -124,9 +157,10 @@ local function validate_invoke_args(invoke, component, env_fn)
         end
         seen_args[arg_name] = true
         
-        -- Check if it's a variant
+        -- Check if it's a variant — resolve Symbol as string for matching
         if declared_variants[arg_name] then
-            local value = eval_expr_fn(arg_expr, env_fn)
+            local raw = arg_expr(env_fn)
+            local value = resolve_symbol(raw, true, env_fn)  -- variant: Symbol→string
             local valid = false
             for _, valid_value in ipairs(declared_variants[arg_name]) do
                 if value == valid_value then
@@ -347,6 +381,18 @@ build_v2_node = function(v3_node, env_fn, component_name, registry)
             table.insert(v2.children, build_v2_node(child, env_fn, component_name, registry))
         elseif AST.IsKind(child, "ComponentInvoke") then
             table.insert(v2.children, M.LowerComponentInvoke(child, env_fn, registry))
+        elseif AST.IsKind(child, "Splice") then
+            local spliced = child.expr_fn(env_fn)
+            if spliced ~= nil then
+                if type(spliced) == "table" and spliced[1] then
+                    -- List of nodes
+                    for _, s in ipairs(spliced) do
+                        table.insert(v2.children, s)
+                    end
+                else
+                    table.insert(v2.children, spliced)
+                end
+            end
         else
             Span.Raise(v3_node._span or Span.Synthetic(),
                 "unsupported child node in V3 lowering: " .. tostring(child and child._kind))
@@ -421,7 +467,7 @@ end
 -- ============================================================================
 
 function M.LowerArgileBody(body_nodes, env_fn, registry)
-    -- Lower a list of V3 nodes (invocations and raw nodes)
+    -- Lower a list of V3 nodes (invocations, raw nodes, splices)
     local v2_nodes = {}
     
     for _, node in ipairs(body_nodes) do
@@ -429,6 +475,17 @@ function M.LowerArgileBody(body_nodes, env_fn, registry)
             table.insert(v2_nodes, M.LowerComponentInvoke(node, env_fn, registry))
         elseif AST.IsKind(node, "NodeDecl") then
             table.insert(v2_nodes, build_v2_node(node, env_fn, nil, registry))
+        elseif AST.IsKind(node, "Splice") then
+            local spliced = node.expr_fn(env_fn)
+            if spliced ~= nil then
+                if type(spliced) == "table" and spliced[1] then
+                    for _, s in ipairs(spliced) do
+                        table.insert(v2_nodes, s)
+                    end
+                else
+                    table.insert(v2_nodes, spliced)
+                end
+            end
         else
             error("Unknown V3 node type: " .. tostring(node._kind))
         end

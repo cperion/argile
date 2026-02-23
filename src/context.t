@@ -399,16 +399,8 @@ end
 terra ui.HashStringContentsWithConfig(text: &config.String, cfg: &config.TextConfig) : uint32
     if text == nil or cfg == nil then return 1 end
     var h: uint32 = 0
-    if text.isStaticallyAllocated then
-        h = h + [uint32]([uint64](text.chars))
-        h = h + (h << 10)
-        h = h ^ (h >> 6)
-        h = h + [uint32](text.length)
-        h = h + (h << 10)
-        h = h ^ (h >> 6)
-    else
-        h = [uint32](hash.HashData([&uint8](text.chars), [uint64](text.length)) % [uint64](4294967295ULL))
-    end
+    -- Always hash string contents, not pointer address (fixes cache misses for identical strings)
+    h = [uint32](hash.HashData([&uint8](text.chars), [uint64](text.length)) % [uint64](4294967295ULL))
 
     h = h + [uint32](cfg.fontId)
     h = h + (h << 10)
@@ -1537,14 +1529,8 @@ terra ui.FloatEqual(a: float, b: float) : bool
 end
 
 terra ui.clamp(val: float, minVal: float, maxVal: float) : float
-    var out = val
-    if out < minVal then
-        out = minVal
-    end
-    if out > maxVal then
-        out = maxVal
-    end
-    return out
+    -- Use min_f/max_f for unified logic and LLVM optimization
+    return min_f(max_f(val, minVal), maxVal)
 end
 
 terra ui.ElementHasConfig(elem: &layout.LayoutElement, cfgType: uint8) : bool
@@ -2008,7 +1994,7 @@ terra ui.Context:wrapTextElements()
 end
 
 terra ui.Context:propagateHeightChangesToParents()
-    var dfsBuffer = self.layoutElementTreeNodeArray1
+    var dfsBuffer = &self.layoutElementTreeNodeArray1
     dfsBuffer.length = 0
     var i: int32 = 0
     while i < self.layoutElementTreeRoots.length do
@@ -2092,8 +2078,8 @@ terra ui.Context:propagateHeightChangesToParents()
 end
 
 terra ui.Context:sizeContainersAlongAxis(xAxis: bool)
-    var bfsBuffer: Int32Array = self.layoutElementChildrenBuffer
-    var resizableContainerBuffer: Int32Array = self.openLayoutElementStack
+    var bfsBuffer: &Int32Array = &self.layoutElementChildrenBuffer
+    var resizableContainerBuffer: &Int32Array = &self.openLayoutElementStack
     
     var rootIndex: int32 = 0
     while rootIndex < self.layoutElementTreeRoots.length do
@@ -2537,11 +2523,8 @@ terra ui.Context:calculateFinalLayout()
     end
     
     self.renderCommands.length = 0
-    -- Preserve previous-frame hover ids through BeginLayout so DSL/runtime code can
-    -- query hover state while emitting the next frame. Recompute the hover set here.
-    self.pointerOverIds:clear()
     
-    var dfsBuffer = self.layoutElementTreeNodeArray1
+    var dfsBuffer = &self.layoutElementTreeNodeArray1
     dfsBuffer.length = 0
     
     var rootIndex: int32 = 0
@@ -2642,12 +2625,6 @@ terra ui.Context:calculateFinalLayout()
                                 if currentElementIndex >= 0 and currentElementIndex < self.elementBoundingBoxes.capacity then
                                     self.elementBoundingBoxes.internalArray[currentElementIndex] = boundingBox
                                     self.elementBoundingBoxValid.internalArray[currentElementIndex] = true
-                                end
-
-                                if ui.PointInsideBox(self.pointerInfo.position, boundingBox) then
-                                    if self.pointerOverIds.length < self.pointerOverIds.capacity then
-                                        self.pointerOverIds:add(currentElement.id)
-                                    end
                                 end
                                 
                                 var emitRectangle = false

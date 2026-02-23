@@ -12,6 +12,12 @@ local function is_table(v)
     return type(v) == "table"
 end
 
+-- Check if a value is a Terra AST node (quote or symbol)
+-- These cannot be indexed in Lua - they must be spliced directly
+local function is_terra_node(v)
+    return terralib.isquote(v) or terralib.issymbol(v)
+end
+
 local function deep_copy(t)
     if not is_table(t) then return t end
     local copy = {}
@@ -91,6 +97,20 @@ local function compileSharedConfig(cfg)
     
     local bg = cfg.backgroundColor
     local userData = cfg.userData
+    local cr = cfg.cornerRadius
+    
+    -- Handle dynamic Terra variables (AST nodes) that cannot be indexed in Lua
+    if is_terra_node(bg) or is_terra_node(cr) then
+        return quote
+            var s : ui.SharedConfig
+            s.backgroundColor = [is_terra_node(bg) and bg or `{0.0, 0.0, 0.0, 0.0}]
+            s.cornerRadius = [is_terra_node(cr) and cr or `{0.0, 0.0, 0.0, 0.0}]
+            s.userData = [userData ~= nil and userData or nil]
+        in
+            s
+        end
+    end
+    
     local r = bg and value_or(bg.r, 0.0) or 0.0
     local g = bg and value_or(bg.g, 0.0) or 0.0
     local b = bg and value_or(bg.b, 0.0) or 0.0
@@ -98,10 +118,10 @@ local function compileSharedConfig(cfg)
     -- background color is provided, default to transparent to avoid painting a
     -- visible rectangle as a side effect.
     local a = bg and value_or(bg.a, 1.0) or 0.0
-    local tl = cfg.cornerRadius and cfg.cornerRadius.topLeft or 0.0
-    local tr = cfg.cornerRadius and cfg.cornerRadius.topRight or 0.0
-    local bl = cfg.cornerRadius and cfg.cornerRadius.bottomLeft or 0.0
-    local br = cfg.cornerRadius and cfg.cornerRadius.bottomRight or 0.0
+    local tl = cr and value_or(cr.topLeft, 0.0) or 0.0
+    local tr = cr and value_or(cr.topRight, 0.0) or 0.0
+    local bl = cr and value_or(cr.bottomLeft, 0.0) or 0.0
+    local br = cr and value_or(cr.bottomRight, 0.0) or 0.0
 
     if userData ~= nil then
         return quote
@@ -256,8 +276,43 @@ local function compileFloatingConfig(cfg)
 end
 
 local function compileTextConfig(cfg)
-    local textColor = cfg.textColor or cfg.color or {}
+    local textColor = cfg.textColor or cfg.color
     local userData = cfg.userData
+    
+    -- Handle dynamic Terra variables (AST nodes) that cannot be indexed in Lua
+    if is_terra_node(textColor) then
+        if userData ~= nil then
+            return quote
+                var t : ui.TextConfig
+                t.userData = [userData]
+                t.textColor = [textColor]
+                t.fontId = [value_or(cfg.fontId, 0)]
+                t.fontSize = [value_or(cfg.fontSize, 16)]
+                t.letterSpacing = [value_or(cfg.letterSpacing, 0)]
+                t.lineHeight = [value_or(cfg.lineHeight, 0)]
+                t.wrapMode = [value_or(cfg.wrapMode, ui.TEXT_WRAP_WORDS)]
+                t.textAlignment = [value_or(cfg.textAlignment, ui.TEXT_ALIGN_LEFT)]
+            in
+                t
+            end
+        end
+        return quote
+            var t : ui.TextConfig
+            t.userData = nil
+            t.textColor = [textColor]
+            t.fontId = [value_or(cfg.fontId, 0)]
+            t.fontSize = [value_or(cfg.fontSize, 16)]
+            t.letterSpacing = [value_or(cfg.letterSpacing, 0)]
+            t.lineHeight = [value_or(cfg.lineHeight, 0)]
+            t.wrapMode = [value_or(cfg.wrapMode, ui.TEXT_WRAP_WORDS)]
+            t.textAlignment = [value_or(cfg.textAlignment, ui.TEXT_ALIGN_LEFT)]
+        in
+            t
+        end
+    end
+    
+    -- Normal Lua table path
+    textColor = textColor or {}
 
     if userData ~= nil then
         return quote
@@ -317,7 +372,7 @@ local function compilePaintConfig(paint_ops)
     
     local op_init_list = terralib.newlist()
     for _, op in ipairs(paint_ops) do
-        local color = op.color or { r = 0, g = 0, b = 0, a = 1 }
+        local color = op.color
         local kind_value = op.kind
         if type(kind_value) == "string" then
             kind_value = kind_map[kind_value]
@@ -326,25 +381,49 @@ local function compilePaintConfig(paint_ops)
             kind_value = ui.PAINT_OP_FILL
         end
         local kind_t = terralib.constant(uint8, kind_value)
-        local color_r = terralib.constant(float, value_or(color.r, 0.0))
-        local color_g = terralib.constant(float, value_or(color.g, 0.0))
-        local color_b = terralib.constant(float, value_or(color.b, 0.0))
-        local color_a = terralib.constant(float, value_or(color.a, 1.0))
-        local x = terralib.constant(float, value_or(op.x, value_or(op.x1, value_or(op.cx, 0.0))))
-        local y = terralib.constant(float, value_or(op.y, value_or(op.y1, value_or(op.cy, 0.0))))
-        local w = terralib.constant(float, value_or(op.w, 0.0))
-        local h = terralib.constant(float, value_or(op.h, 0.0))
-        local r = terralib.constant(float, value_or(op.r, 0.0))
-        local x2 = terralib.constant(float, value_or(op.x2, 0.0))
-        local y2 = terralib.constant(float, value_or(op.y2, 0.0))
-        local width = terralib.constant(uint16, value_or(op.width, 1))
         
-        op_init_list:insert(`(ui.PaintOp {
-            kind = [kind_t],
-            color = ui.Color { r = [color_r], g = [color_g], b = [color_b], a = [color_a] },
-            x = [x], y = [y], w = [w], h = [h], r = [r],
-            x2 = [x2], y2 = [y2], width = [width]
-        }))
+        -- Handle dynamic Terra variables (AST nodes) that cannot be indexed in Lua
+        if is_terra_node(color) then
+            local x = value_or(op.x, value_or(op.x1, value_or(op.cx, 0.0)))
+            local y = value_or(op.y, value_or(op.y1, value_or(op.cy, 0.0)))
+            local w = value_or(op.w, 0.0)
+            local h = value_or(op.h, 0.0)
+            local r = value_or(op.r, 0.0)
+            local x2 = value_or(op.x2, 0.0)
+            local y2 = value_or(op.y2, 0.0)
+            local width = value_or(op.width, 1)
+            
+            op_init_list:insert(`(ui.PaintOp {
+                kind = [kind_t],
+                color = [color],
+                x = [float]([x]), y = [float]([y]), w = [float]([w]), h = [float]([h]), r = [float]([r]),
+                x2 = [float]([x2]), y2 = [float]([y2]), width = [uint16]([width])
+            }))
+        else
+            -- Normal Lua table path
+            color = color or { r = 0, g = 0, b = 0, a = 1 }
+            -- Color components - these could be Lua numbers or Terra symbols
+            -- Don't use terralib.constant, let Terra handle the conversion
+            local color_r = value_or(color.r, 0.0)
+            local color_g = value_or(color.g, 0.0)
+            local color_b = value_or(color.b, 0.0)
+            local color_a = value_or(color.a, 1.0)
+            local x = value_or(op.x, value_or(op.x1, value_or(op.cx, 0.0)))
+            local y = value_or(op.y, value_or(op.y1, value_or(op.cy, 0.0)))
+            local w = value_or(op.w, 0.0)
+            local h = value_or(op.h, 0.0)
+            local r = value_or(op.r, 0.0)
+            local x2 = value_or(op.x2, 0.0)
+            local y2 = value_or(op.y2, 0.0)
+            local width = value_or(op.width, 1)
+            
+            op_init_list:insert(`(ui.PaintOp {
+                kind = [kind_t],
+                color = ui.Color { r = [float]([color_r]), g = [float]([color_g]), b = [float]([color_b]), a = [float]([color_a]) },
+                x = [float]([x]), y = [float]([y]), w = [float]([w]), h = [float]([h]), r = [float]([r]),
+                x2 = [float]([x2]), y2 = [float]([y2]), width = [uint16]([width])
+            }))
+        end
     end
     
     local ops_array = `arrayof(ui.PaintOp, [op_init_list])
@@ -405,9 +484,6 @@ local function validate_runtime_states(node)
         end
         if not node.id then
             error("argile: state '" .. state_name .. "' requires element to have an id")
-        end
-        if type(node.id) ~= "string" then
-            error("argile: state '" .. state_name .. "' currently requires a string id")
         end
     end
 end
@@ -518,7 +594,6 @@ function ui.compile(node)
     local stmts = terralib.newlist()
 
     local runtime_state_names = collect_present_runtime_states(node)
-    local has_runtime_state_overlays = #runtime_state_names > 0 and node.id and type(node.id) == "string"
     local state_mask_var = nil
     local state_combos = nil
     local state_combo_count = 0
@@ -536,12 +611,49 @@ function ui.compile(node)
                 var [elem_id_var] = ui.GetElementId(id_str)
                 ui.OpenElementWithId([elem_id_var])
             end)
+        elseif type(node.id) == "number" then
+            elem_id_var = symbol(ui.ElementId, "elem_id")
+            stmts:insert(quote
+                var [elem_id_var] = ui.HashNumber([node.id], 0)
+                ui.OpenElementWithId([elem_id_var])
+            end)
+        elseif type(node.id) == "table" and node.id.gettype then
+            local t = node.id:gettype()
+            elem_id_var = symbol(ui.ElementId, "elem_id")
+            
+            if t:isintegral() then
+                stmts:insert(quote
+                    var [elem_id_var] = ui.HashNumber([node.id], 0)
+                    ui.OpenElementWithId([elem_id_var])
+                end)
+            elseif t == rawstring or t == &int8 then
+                local C = terralib.includec("string.h")
+                stmts:insert(quote
+                    var str_val = [node.id]
+                    var id_str = ui.String {
+                        isStaticallyAllocated = false,
+                        length = C.strlen(str_val),
+                        chars = str_val
+                    }
+                    var [elem_id_var] = ui.GetElementId(id_str)
+                    ui.OpenElementWithId([elem_id_var])
+                end)
+            elseif t == ui.ElementId then
+                stmts:insert(quote
+                    var [elem_id_var] = [node.id]
+                    ui.OpenElementWithId([elem_id_var])
+                end)
+            else
+                error("argile: Unsupported dynamic ID type: " .. tostring(t))
+            end
         else
             stmts:insert(quote ui.OpenElement() end)
         end
     else
         stmts:insert(quote ui.OpenElement() end)
     end
+
+    local has_runtime_state_overlays = #runtime_state_names > 0 and (elem_id_var ~= nil)
     
     if node.layout then
         stmts:insert(quote ui.SetOpenElementLayoutConfig([compileLayoutConfig(node.layout)]) end)
@@ -615,42 +727,66 @@ function ui.compile(node)
     end
 
     if node.text then
-        local textStr = node.text
-        if type(textStr) ~= "string" then
-            textStr = tostring(textStr)
-        end
-
-        if has_runtime_state_overlays then
-            local text_dispatch = emit_state_mask_dispatch(state_mask_var, state_combo_count, function(mask)
-                local combo = state_combos[mask]
-                local branch = terralib.newlist()
-                if combo.text_cfg_expr then
-                    branch:insert(quote
-                        var txt_cfg = [combo.text_cfg_expr]
+        local textVal = node.text
+        local textStr
+        -- Check if it's a compile-time Lua string
+        if type(textVal) == "string" then
+            -- It's a Lua string constant - safe to use directly
+            textStr = textVal
+            
+            if has_runtime_state_overlays then
+                local text_dispatch = emit_state_mask_dispatch(state_mask_var, state_combo_count, function(mask)
+                    local combo = state_combos[mask]
+                    local branch = terralib.newlist()
+                    if combo.text_cfg_expr then
+                        branch:insert(quote
+                            var txt_cfg = [combo.text_cfg_expr]
+                            var txt_cfg_ptr = ui.GetCurrentContext():storeTextConfig(txt_cfg)
+                            ui.OpenTextElementWithLength([textStr], [#textStr], txt_cfg_ptr)
+                        end)
+                    else
+                        branch:insert(quote
+                            ui.OpenTextElementWithLength([textStr], [#textStr], nil)
+                        end)
+                    end
+                    return branch
+                end)
+                if text_dispatch then
+                    stmts:insert(text_dispatch)
+                end
+            else
+                local textConfig = node.textConfig
+                if textConfig then
+                    stmts:insert(quote
+                        var txt_cfg = [compileTextConfig(textConfig)]
                         var txt_cfg_ptr = ui.GetCurrentContext():storeTextConfig(txt_cfg)
                         ui.OpenTextElementWithLength([textStr], [#textStr], txt_cfg_ptr)
                     end)
                 else
-                    branch:insert(quote
+                    stmts:insert(quote
                         ui.OpenTextElementWithLength([textStr], [#textStr], nil)
                     end)
                 end
-                return branch
-            end)
-            if text_dispatch then
-                stmts:insert(text_dispatch)
             end
         else
+            -- It's a runtime Terra value (Symbol or expression)
+            -- We can't get length at compile time, so we need runtime strlen
+            local C = terralib.includec("string.h")
             local textConfig = node.textConfig
+            
             if textConfig then
                 stmts:insert(quote
                     var txt_cfg = [compileTextConfig(textConfig)]
                     var txt_cfg_ptr = ui.GetCurrentContext():storeTextConfig(txt_cfg)
-                    ui.OpenTextElementWithLength([textStr], [#textStr], txt_cfg_ptr)
+                    var runtime_str : rawstring = [textVal]
+                    var runtime_len = C.strlen(runtime_str)
+                    ui.OpenTextElementWithLength(runtime_str, runtime_len, txt_cfg_ptr)
                 end)
             else
                 stmts:insert(quote
-                    ui.OpenTextElementWithLength([textStr], [#textStr], nil)
+                    var runtime_str : rawstring = [textVal]
+                    var runtime_len = C.strlen(runtime_str)
+                    ui.OpenTextElementWithLength(runtime_str, runtime_len, nil)
                 end)
             end
         end
@@ -754,6 +890,13 @@ function ui.resolve_node(node)
                     table.insert(resolved.paint, deep_copy(op))
                 end
             end
+        end
+    end
+
+    if node.layout_ops then
+        local layout_patch = style.apply_layout_ops(nil, node.layout_ops)
+        if layout_patch and layout_patch.layout then
+            resolved.layout = merge_into(resolved.layout, layout_patch.layout)
         end
     end
     
@@ -862,8 +1005,28 @@ function ui.resolve_node(node)
     return resolved
 end
 
+local function propagate_inherited_text_config(node, inherited_text_cfg)
+    if type(node) ~= "table" then return end
+
+    local effective_inherited = inherited_text_cfg
+    if node.textConfig then
+        effective_inherited = merge_into(inherited_text_cfg, node.textConfig)
+    end
+
+    if node.text ~= nil and effective_inherited ~= nil then
+        node.textConfig = merge_into(effective_inherited, node.textConfig)
+    end
+
+    if node.children then
+        for _, child in ipairs(node.children) do
+            propagate_inherited_text_config(child, effective_inherited)
+        end
+    end
+end
+
 function ui.compileResolved(node)
     local resolved = ui.resolve_node(node)
+    propagate_inherited_text_config(resolved, nil)
     return ui.compile(resolved)
 end
 

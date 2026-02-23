@@ -187,7 +187,19 @@ Terra functions are first-class Lua values and can be called directly from Lua. 
 
 **CRITICAL:** It is *not* possible to directly evaluate arbitrary Lua code from within running Terra code. Terra compiles down to raw machine code that operates independently of the Lua runtime and garbage collector. The `[lua_expr]` escape syntax evaluates the Lua expression at *compile-time*, not runtime.
 
-If you need to call Lua from Terra at runtime, you must use LuaJIT's FFI to cast a Lua function to a C function pointer using `terralib.cast(terra_function_type, lua_function)`. You can then pass this function pointer into your Terra code. Alternatively, you should precompute the required values in Lua and pass them as arguments to the Terra function.
+If you need to call Lua from Terra at runtime, you must use LuaJIT's FFI to cast a Lua function to a C function pointer using `terralib.cast(terra_function_type, lua_function)`. Because the Terra compiler cannot infer the return types of arbitrary Lua functions, **Lua functions cannot return values to Terra unless they are explicitly cast to a Terra function type.**
+
+```lua
+local function lua_add(x, y) return x + y end
+-- Cast to a function taking two ints and returning an int:
+local terra_add = terralib.cast({int, int} -> int, lua_add)
+
+terra do_add()
+    return terra_add(40, 2) -- Incurs FFI transition overhead
+end
+```
+
+**WARNING:** Calling Lua from Terra is very slow compared to native execution because it forces a context switch out of the compiled machine code back into the Lua VM. Alternatively, you should precompute the required values in Lua and pass them as arguments to the Terra function, or use macros to evaluate logic at compile-time.
 
 ### 4.3 Passing Values Across the Boundary
 
@@ -257,10 +269,12 @@ These type signatures are used to declare function pointers in Terra. Note that 
 Tuples are special struct types that contain unnamed fields accessible via `_0`, `_1`, etc. They are created with `tuple(T1, T2, ...)`:
 
 ```lua
-var a : tuple(int, float)  -- has fields _0: int, _1: float
+var a : tuple(int, float) = { 5, 3.14 }
+-- Access fields via ._0, ._1
+C.printf("%d %f\n", a._0, a._1)
 ```
 
-Unlike regular structs, tuples with the same element types are considered the same type. Tuples are used internally for multiple return values and can be pattern-matched in assignments.
+Unlike regular structs, tuples with the same element types are considered the same type. Tuples are used internally for multiple return values and can be pattern-matched in assignments (`var x, y = my_multi_return_func()`).
 
 ### 5.8 Struct Types
 
@@ -273,6 +287,17 @@ Terra guarantees that the memory layout of structs is strictly predictable and c
 Because types are Lua objects, they expose a rich introspection API. You can check the nature of a type using methods like `T:ispointer()`, `T:isarray()`, `T:isstruct()`, `T:isprimitive()`, and `T:isfunction()`. If you have a Terra value in Lua (a `cdata` object), you can retrieve its Terra type using `terralib.typeof(obj)`.
 
 This introspection is the cornerstone of Terra's generic programming capabilities. For example, you can write a Lua function `print_any(T)` that uses `T:ispointer()` or `T:isstruct()` to programmatically generate a Terra function tailored to correctly print the internal layout of that specific type.
+
+### 5.10 Syntax Precedence: Pointers and Arrays
+
+**CRITICAL FOR C PROGRAMMERS:** Terra's type syntax is strictly compositional and evaluates left-to-right (or rather, inside-out based on Lua operator precedence), totally ignoring C's arcane declarator rules.
+
+* `&int` evaluates to a Pointer to an Integer.
+* `int[4]` evaluates to an Array of 4 Integers.
+* `&int[4]` evaluates to a **Pointer to an Array** of 4 integers. (Because `int[4]` is evaluated first, then `&` is applied to the result).
+* `(&int)[4]` evaluates to an **Array of 4 Pointers** to integers. (Because `&int` is evaluated first, then `[4]` is applied to the result).
+
+Do not hallucinate C-style syntax like `int *x[4]` (which is a syntax error in Terra).
 
 ---
 
@@ -341,11 +366,34 @@ Terra supports the standard set of C-like operators:
 
 Terra provides the following comparison operators: `==`, `~=` (not equal), `<`, `>`, `<=`, `>=`. These evaluate to a `bool`.
 
-Comparisons work naturally on primitive types and pointers (comparing memory addresses). However, **Terra does not support direct structural comparison of arrays or structs by default**. This is intentional; since structs may contain padding, a simple bitwise memory comparison (like `memcmp`) might falsely report inequality. To compare custom structs, you must either write a specific comparison function or implement the `__eq` metamethod via the Exotype API (see Section 15).
+Comparisons work naturally on primitive types and pointers (comparing memory addresses). 
+
+**Null Checking:** Because there is no implicit cast to boolean, you **cannot** evaluate a pointer's truthiness directly. You must explicitly compare against `nil`:
+* *Wrong:* `if ptr then ... end`
+* *Wrong:* `if not ptr then ... end`
+* *Right:* `if ptr ~= nil then ... end`
+* *Right:* `if ptr == nil then ... end`
+
+**Struct Comparison:** **Terra does not support direct structural comparison of arrays or structs by default**. This is intentional; since structs may contain padding, a simple bitwise memory comparison (like `memcmp`) might falsely report inequality. To compare custom structs, you must either write a specific comparison function or implement the `__eq` metamethod via the Exotype API (see Section 15).
 
 ### 7.3 The @ Dereference and & Address-Of
 
-Terra uses `@` to dereference a pointer (e.g., `@ptr` yields the value the pointer points to) and `&` to take the address of a variable (e.g., `&var` yields a pointer to `var`).
+Terra uses `@` to dereference a pointer (e.g., `@ptr` yields the value the pointer points to). **Do not use `*` for dereferencing** (unlike C/C++).
+Terra uses `&` to take the address of a variable (e.g., `&var` yields a pointer to `var`).
+
+**Field Access on Pointers:** Unlike C/C++, **Terra does not have a `->` operator.** You use the standard dot `.` operator for both values and pointers. If `obj` is a pointer to a struct, `obj.field` implicitly dereferences the pointer (equivalent to `(@obj).field`).
+
+**Unpacking Structs and Tuples:** Terra provides two built-in global macros, `unpackstruct(obj)` and `unpacktuple(obj)`. These take a struct or tuple object and expand its fields into a multiple-value expression list. This is extremely useful for generic metaprogramming or passing all fields of a struct as arguments to a function.
+
+```terra
+terra f() return {1, 2.5} end
+
+terra g()
+    var tup = f()
+    var x, y = unpacktuple(tup)
+    return x + y
+end
+```
 
 **Important Asymmetry:** The `&` symbol serves dual purposes depending on context:
 
@@ -355,15 +403,15 @@ Because `&int` is also a valid Lua expression that evaluates to a Terra type, yo
 
 ### 7.4 Casts
 
-Casts in Terra use a bracket syntax: `[TargetType](expression)`. For example, `[int32](3.14)` truncates a float to an integer.
+Casts in Terra use a bracket syntax: `[TargetType](expression)`. For example, `[int32](3.14)` truncates a float to an integer. **Do not use C-style `(Type)val` or C++-style `Type(val)` casts**—those will cause syntax errors.
 
 Terra supports standard explicit casts:
 
 * Between numeric types (e.g., float to int, wide int to narrow int).
-* Between pointers of different types (e.g., `[&int](ptr)`).
+* Between pointers of different types (e.g., `[&int](ptr)`). This is critical for C FFI, where `void*` is translated to `&opaque` and must be explicitly cast.
 * Between pointers and sufficiently large integers (e.g., `[intptr](ptr)` or `[&int](my_intptr)`).
 
-**Crucially, Terra restricts implicit casts.** Unlike C, Terra will *not* implicitly convert a pointer to a boolean, or an `int` to a `bool`. You must explicitly cast `[bool](my_int)`. This is an intentional design choice to prevent common bugs associated with C's loose type coercion.
+**Crucially, Terra restricts implicit casts.** Unlike C, Terra will *not* implicitly convert a pointer to a boolean, or an `int` to a `bool`. You must explicitly cast `[bool](my_int)`. Furthermore, **Terra does not implicitly cast `void*` (`&opaque`) to other pointer types.** You must cast explicitly: `var ptr = [&int](C.malloc(sizeof(int)))`.
 
 ### 7.5 Sizeof
 
@@ -376,20 +424,6 @@ You can use it with types directly, like `sizeof(int)`, or with expressions, lik
 ## 8. Control Flow
 
 ### 8.1 if / elseif / else / end
-
-Terra's `if` statements follow Lua's syntax:
-
-```terra
-if condition then
-    -- ...
-elseif other_condition then
-    -- ...
-else
-    -- ...
-end
-```
-
-**Strict typing:** The condition expression *must* evaluate to a `bool`. Unlike C, Terra will not implicitly convert a pointer or an integer to a boolean. `if ptr then` is a compile-time error; you must write `if ptr ~= nil then`. This strictness prevents subtle bugs related to truthiness.
 
 Terra's `if` statements follow Lua's syntax:
 
@@ -535,6 +569,15 @@ end
 
 You can capture multiple returns via pattern matching: `var min, max = sort2(10, 5)`. If you do not provide enough variables to capture the returns, the excess values are silently discarded. Conversely, if you use a multi-return function as the *last* argument in another function call or return list, the tuple is "unpacked" and spliced directly into the argument list.
 
+If you assign multiple returns to a single variable, it becomes a tuple:
+```terra
+var tup = sort2(10, 5)
+C.printf("%d %d\n", tup._0, tup._1)
+
+-- You can dynamically unpack it back into an expression list:
+var x, y = unpacktuple(tup)
+```
+
 ### 9.4 Varargs
 
 Terra supports variadic functions (varargs) for interoperability with C functions like `printf`. While direct vararg syntax in Terra function definitions is limited, you can use macros to achieve similar functionality:
@@ -558,7 +601,16 @@ terra MyStruct:add(b : int)
 end
 ```
 
-This automatically injects a `self` parameter as the first argument, with type `&MyStruct`. When calling a method (`obj:add(5)`), if `obj` is a value rather than a pointer, Terra automatically takes the address of `obj` to pass to `self`.
+This automatically injects a `self` parameter as the first argument, with type `&MyStruct` (a pointer). When calling a method (`obj:add(5)`), if `obj` is a value rather than a pointer, Terra automatically takes the address of `obj` to pass to `self` (an implicit method receiver cast). Conversely, if the method expects a value (`self : MyStruct`) and you call it on a pointer, Terra will implicitly dereference the pointer (`@obj`).
+
+If you explicitly define the method in the `.methods` table without the colon syntax, you can control whether `self` is passed by value or by pointer:
+```terra
+-- Takes 'self' by value (copies the struct)
+terra MyStruct.methods.by_value(self : MyStruct) end
+
+-- Takes 'self' by pointer (mutates the struct)
+terra MyStruct.methods.by_ptr(self : &MyStruct) end
+```
 
 **IMPORTANT:** Method dispatch in Terra is entirely static. There is no built-in virtual dispatch or inheritance. If you need runtime polymorphism, you must build it manually by embedding function pointers within your struct (creating a vtable).
 
@@ -604,7 +656,20 @@ struct Point {
 }
 ```
 
-Fields can be separated by either newlines or semicolons. You can define anonymous structs using the constructor syntax: `var p = { x = 1.0, y = 2.0 }`. If you have mutually recursive structs (like linked lists), you can use forward declarations by simply writing `struct Node` before providing the full definition later.
+Fields can be separated by either newlines or semicolons. 
+
+**Struct Instantiation:** To create an instance of a struct, use curly brace syntax: `var p = Point { x = 1.0, y = 2.0 }` or ordered initialization `var p = Point { 1.0, 2.0 }`. **Do not use C++ style parenthesis initialization** (e.g., `Point(1.0, 2.0)` is a syntax error).
+You can also define anonymous structs (tuples with named fields) using the constructor syntax without a type name: `var p = { x = 1.0, y = 2.0 }`.
+
+**Field Access on Pointers:** Use the dot `.` operator for *both* value and pointer types. **Do not use the C/C++ `->` operator.**
+```terra
+var p = Point { 1.0, 2.0 }
+var ptr = &p
+C.printf("%f", ptr.x) -- Correct. Implicitly dereferences ptr.
+-- C.printf("%f", ptr->x) -- ERROR: -> does not exist in Terra
+```
+
+If you have mutually recursive structs (like linked lists), you can use forward declarations by simply writing `struct Node` before providing the full definition later.
 
 ### 10.2 Memory Layout
 
@@ -618,15 +683,24 @@ Structs can contain other structs. If a field's type is a struct (`box : Boundin
 
 Terra also supports `union` blocks within a struct definition. All fields declared inside a `union { ... }` block will share the exact same starting memory address. The size of the union block is the size of its largest member.
 
+When constructing or modifying a struct's `entries` programmatically from Lua, a union is represented as a nested list of fields:
+```lua
+MyStruct.entries = terralib.newlist({
+    {"type_tag", int32},
+    -- A nested list creates a union block
+    { {"as_int", int64}, {"as_float", double}, {"as_ptr", &opaque} }
+})
+```
+
 ### 10.4 Struct Methods
 
 When you define a struct, Terra automatically provisions a Lua table at `MyStruct.methods`. The syntax `terra MyStruct:do_thing()` is syntactic sugar that inserts a function into this table.
 
 Because the methods table is just a Lua table, you can iterate over it, generate methods programmatically using loops and macros, or attach pure Lua functions to it. Static methods (methods that do not take a `self` instance) can be defined using dot syntax: `terra MyStruct.create_empty() ... end`.
 
-### 10.5 Constructors and Destructors via Metamethods
+### 10.5 Constructors and Destructors
 
-Terra does not enforce C++-style constructors automatically, but through Exotypes (Section 15), you can define `__init` and `__destruct` metamethods.
+Terra does not enforce C++-style constructors automatically. You can define regular methods (e.g., `init` and `free` or `destruct`) to handle initialization and cleanup.
 
 However, it's vital to understand that Terra relies on explicit calls or `defer` for cleanup. If you implement a `free()` method, you must explicitly call it or write `defer obj:free()` when the object is instantiated. Because Terra uses by-value copying for struct assignment, implementing implicit destructors can easily lead to double-free bugs when a struct is passed to a function by value.
 
@@ -657,6 +731,8 @@ Crucially, Terra has no Garbage Collector and performs no escape analysis. If yo
 Terra does not provide built-in `new` or `delete` operators. To allocate memory on the heap, you must import the standard C library (`local C = terralib.includec("stdlib.h")`) and explicitly call `C.malloc` and `C.free`. Because `malloc` returns a `void*` (represented as `&opaque`), you must cast the result to your desired type:
 
 `var my_struct = [&MyStruct](C.malloc(sizeof(MyStruct)))`
+
+Remember that `C.malloc` returns `void*`, which in Terra is the type `&opaque`. You **must** use the explicit casting syntax shown above. Assigning `C.malloc` directly to a typed pointer without casting is a compile-time error.
 
 Because manual memory management is verbose and error-prone, a common Terra idiom is to use Arena Allocators (bump allocators). Arenas are easily implemented in Terra and pair perfectly with its lack of constructors, allowing you to bulk-allocate and bulk-free memory for complex graph structures or compilation phases.
 
@@ -714,7 +790,9 @@ Vectors like `vector(float, 4)` are Terra's primitive for SIMD programming.
 ```terra
 var a = vector(1, 2, 3, 4)           -- type: vector(int, 4)
 var b = vectorof(int, 3, 4.5, 4)     -- type: vector(int, 3), 4.5 cast to int
-``` Basic arithmetic (`+`, `-`, `*`, `/`) applied to vectors will automatically compile down to the appropriate hardware SIMD instructions (e.g., `addps` in SSE).
+```
+
+Basic arithmetic (`+`, `-`, `*`, `/`) applied to vectors will automatically compile down to the appropriate hardware SIMD instructions (e.g., `addps` in SSE).
 
 Elements can be extracted (`my_vec[0]`) or inserted (`my_vec[0] = 3.14`), but frequent scalar access to vectors defeats their performance purpose. Instead, you should load and store directly from memory using pointers: `@([&vector(float, 4)](float_ptr)) = my_vec`. While Terra does not provide a native shuffle operator, you can achieve specific swizzles by utilizing `terralib.intrinsic` to directly call the platform-specific LLVM shuffle or permute intrinsics.
 
@@ -738,11 +816,26 @@ Quotes are inert; the Terra code inside them is *not* evaluated or type-checked 
 
 The bracket operator `[ ]` is the *Escape*. When the Terra compiler parses a Terra function or quote, and encounters `[ lua_expr ]`, it pauses parsing, evaluates the Lua expression `lua_expr` in the local lexical environment, and splices the resulting Lua value directly into the Terra AST being built.
 
+**CRITICAL TIMING DISTINCTION:** Escapes `[expr]` are evaluated exactly once when the Terra function is *defined* (parsed/constructed). In contrast, Macros (Section 14) are evaluated later, when the function is *compiled/type-checked*. 
+
+Because escapes evaluate at definition time, if a Lua expression inside an escape refers to a local variable defined in the Terra code, that variable evaluates to a `Symbol` object in Lua, *not* a concrete runtime value.
+
+```terra
+terra foo(a : int)
+    var b = 4
+    -- 'a' and 'b' are Terra variables. Inside the escape, they are
+    -- Lua variables holding Terra Symbol objects.
+    return [ my_lua_generator(a, b) ]
+end
+```
+
 The result of `lua_expr` must be convertible to a valid Terra AST node: a Terra primitive type (which splices as a type annotation), a number/string (which splices as a constant literal), a Terra Symbol (which splices as an identifier), or a Terra Quote (which splices as a block of code).
 
-### 13.3 Splicing Types
+### 13.3 Types are Lua Expressions
 
-Because types are Lua values, escaping them is the primary mechanism for generic programming. If you have a Lua variable `local T = float`, you can write a Terra declaration as `var x : [T]`. The escape evaluates `T`, yields the `float` type object, and splices it into the AST as the type annotation. This pattern allows you to write Lua functions that construct parameterized data structures or functions, acting as a highly flexible alternative to C++ templates.
+In Terra, type annotations are *already* evaluated as Lua expressions. You do **not** need to use escapes `[]` for types. If you have a Lua variable `local T = float`, you simply write `var x : T`. The Terra compiler evaluates the expression `T` in the Lua environment and uses the resulting type.
+
+This means any valid Lua expression can appear after a colon: `var x : MyTypeGenerator(int, 5)`. This is the primary mechanism for generic programming, acting as a highly flexible, imperative alternative to C++ templates. You only use the `[expr]` escape syntax to splice *values* or *quotes* into executable Terra code, not for type annotations.
 
 ### 13.4 Splicing Values
 
@@ -756,15 +849,49 @@ If a Lua expression inside an escape evaluates to a Quote object, the AST repres
 
 ### 13.6 Splicing Statement Lists
 
-If an escape evaluates to a Lua table (or `List`) containing multiple Quote objects, Terra performs an unquote-splice, unrolling the array and inserting every quote sequentially into the AST. This is how you programmatically generate sequential blocks of statements.
+If an escape evaluates to a Lua table (specifically a `terralib.newlist()`) containing multiple Quote objects, Terra performs an unquote-splice, unrolling the list and inserting every quote sequentially into the AST. This is how you programmatically generate sequential blocks of statements.
 
-For instance, if you want to explicitly unroll a loop 4 times, you can use Lua to generate 4 `quote ... end` blocks, store them in a Lua list, and then place an escape `[my_list]` in your Terra code to paste all 4 blocks sequentially.
+For instance, if you want to explicitly unroll a loop 4 times, you can use Lua to generate 4 `quote ... end` blocks, store them in a `newlist`, and then place an escape `[my_list]` in your Terra code:
+
+```lua
+local stmts = terralib.newlist()
+for i = 1, 4 do
+    stmts:insert(quote C.printf("Unroll %d\n", i) end)
+end
+
+terra do_unroll()
+    [stmts] -- Splices all 4 printf statements sequentially
+end
+```
 
 ### 13.7 The exprlist Pattern
 
-The unquote-splice behavior also works for comma-separated expression lists, such as function arguments. If you have a Lua list of quoted expressions `args = { \`a, \`b, \`c }`, you can call a Terra function using an escape:`my_func([args])`.
+The unquote-splice behavior also works for comma-separated expression lists, such as function arguments. If you have a Lua list of quoted expressions `args = { \`a, \`b, \`c }`, you can call a Terra function using an escape: `my_func([args])`.
 
 The compiler automatically flattens the list into `my_func(a, b, c)`. This pattern allows you to write Terra functions that are effectively variadic; the Lua meta-program inspects the context, builds a dynamic array of arguments, and splices them into the function call at compile time.
+
+### 13.8 Hygiene and Programmatic Symbols
+
+When generating code, you often need to introduce temporary variables. If you simply write `quote var temp = ... end`, you risk **variable capture**—if the code you are splicing already uses the name `temp`, your generated code will collide with it or shadow it unpredictably.
+
+Terra solves this using the `symbol()` API. A symbol is a guaranteed-unique identifier. 
+
+```lua
+local function make_swap(a_quote, b_quote)
+    -- We must pass the Terra type to symbol() if we want it strictly typed,
+    -- or omit it if we want Terra to infer it from the initializer.
+    local temp = symbol(a_quote:gettype(), "temp_swap_var")
+    
+    return quote
+        -- Use the escape operator to declare the variable using the symbol
+        var [temp] = a_quote
+        a_quote = b_quote
+        b_quote = [temp]
+    end
+end
+```
+
+Whenever you generate declarations (`var [sym]`, `goto [lbl]`, `::[lbl]::`), you must use escapes to inject the programmatic symbol or label object.
 
 ---
 
@@ -772,13 +899,15 @@ The compiler automatically flattens the list into `my_func(a, b, c)`. This patte
 
 ### 14.1 What Terra Macros Are
 
-A Terra macro is a Lua function invoked at *type-checking time* (phase 2), rather than AST construction time (phase 1). They look like regular function calls in Terra but are defined in Lua using `mymacro = macro(function(ctx, node) ... end)`.
+A Terra macro is a Lua function invoked at *type-checking time* (phase 2), rather than AST construction time (phase 1). They look like regular function calls in Terra but are defined in Lua using `mymacro = macro(function(arg1, arg2) ... end)`.
 
-Unlike C macros, which are blind text replacements, Terra macros receive the compiler context and the actual AST nodes of their arguments. They are fully hygienic by default, have access to the type information of their arguments, and can leverage the full computational power of Lua to analyze the types and generate a customized Quote to replace the macro call.
+Unlike C macros, which are blind text replacements, Terra macros receive the actual AST nodes (Quotes) of their arguments. They are fully hygienic by default, have access to the type information of their arguments, and can leverage the full computational power of Lua to analyze the types and generate a customized Quote to replace the macro call.
+
+*(Note: The `macro` API automatically strips the compiler context from the arguments. If you specifically need access to the compilation context to emit custom compiler errors, use `terralib.internalmacro(function(ctx, tree, arg1, arg2) ... end)` instead).*"
 
 ### 14.2 Macro Parameters
 
-When a macro is invoked, the first parameter `ctx` is the compiler context (used for advanced type environment queries). The subsequent parameters are the arguments passed to the macro in Terra.
+When a macro is invoked, the parameters are the arguments passed to the macro in Terra.
 
 **Crucially, these arguments are typed AST nodes (Quotes), not runtime values.** You cannot do `if arg == 5` because `arg` is an AST node. Instead, you use the introspection API: `arg:gettype()` returns the Terra type of the node. If the node is a compile-time constant, you can extract its value using `arg:asvalue()`. The macro must analyze these properties and return a new Quote.
 
@@ -845,6 +974,37 @@ end)
 -- Usage: var ptr = new(int)
 ```
 
+**Programmatic Operator Application**
+Terra provides a built-in macro `operator(op_string, ...args)` that allows you to dynamically emit operations (e.g., `+`, `-`, `<`, etc.) when the operator itself is a variable in your meta-program:
+
+```lua
+local op = "+"
+local add_macro = macro(function(a, b)
+    return quote var x = operator(op, a, b) in x end
+end)
+```
+
+### 14.6 Internal Macros and Error Reporting
+
+Standard macros defined via `macro(function(...) ... end)` only receive the AST nodes of their arguments. If your macro needs to perform semantic validation and reject invalid code gracefully (pointing the error at the exact line of the macro invocation), you must use `terralib.internalmacro`.
+
+`terralib.internalmacro` passes two hidden arguments before the macro arguments:
+1. `ctx`: The compilation diagnostics context.
+2. `tree`: The AST node representing the macro invocation site itself.
+
+```lua
+local safe_div = terralib.internalmacro(function(ctx, tree, a, b)
+    if b:asvalue() == 0 then
+        -- This throws a compile-time error pointing EXACTLY 
+        -- at the line in the .t file where safe_div was called!
+        ctx:reporterror(tree, "Division by zero detected at compile time!")
+        return tree:aserror() -- Gracefully poison the AST
+    end
+    return `a / b
+end)
+```
+This is the required pattern for building robust, safe DSLs and libraries that provide high-quality developer feedback.
+
 ---
 
 ## 15. Exotypes: Operator Overloading and Metamethods
@@ -859,20 +1019,27 @@ When the Terra typechecker encounters an operation on an exotype (like `a + b`),
 
 You can overload arithmetic operators using `__add` (+), `__sub` (-), `__mul` (*), `__div` (/), `__mod` (%), and `__unm` (unary -).
 
-These metamethods receive the AST nodes (Quotes) of the left and right operands: `__add = function(self, lhs, rhs) ... end`. At least one operand is guaranteed to be of the exotype. The metamethod must return a Quote representing the computation.
+These metamethods can be implemented in two ways:
+1. **As a Terra function:** This is the easiest method. The function takes the concrete types and returns the result.
+2. **As a Lua macro:** The macro receives the AST nodes (Quotes) of the operands and must return a Quote.
 
 ```lua
 struct Complex { real : float, imag : float }
-Complex.metamethods.__add = function(self, lhs, rhs)
-    return `Complex { lhs.real + rhs.real, lhs.imag + rhs.imag }
+
+-- Method 1: As a Terra function (Recommended for simple overloads)
+terra Complex.metamethods.__add(a : Complex, b : Complex)
+    return Complex { a.real + b.real, a.imag + b.imag }
 end
+
+-- Method 2: As a Lua macro returning a Quote
+Complex.metamethods.__sub = macro(function(a_quote, b_quote)
+    return `Complex { a_quote.real - b_quote.real, a_quote.imag - b_quote.imag }
+end)
 ```
 
 ### 15.3 Comparison Metamethods
 
-Comparison operators are overloaded via `__eq` (==), `__lt` (<), and `__le` (<=). The metamethod signature is identical to arithmetic operators. The returned Quote must evaluate to a `bool`.
-
-Note that Terra does *not* provide `__ne`, `__gt`, or `__ge`. Instead, the compiler automatically rewrites `a ~= b` to `not (a == b)`, `a > b` to `b < a`, and `a >= b` to `b <= a`. This simplifies implementation but requires your `__eq`, `__lt`, and `__le` logic to establish a consistent partial or total order.
+Comparison operators are overloaded via `__eq` (==), `__ne` (~=), `__lt` (<), `__le` (<=), `__gt` (>), and `__ge` (>=). The metamethod signature is identical to arithmetic operators. The returned Quote must evaluate to a `bool`.
 
 ### 15.4 Index and Newindex
 
@@ -894,16 +1061,16 @@ For example, if you define a `Complex` struct, you can implement `__cast` to int
 
 ```lua
 Complex.metamethods.__cast = function(fromtype, totype, exp)
-    if fromtype == float then
+    if fromtype == float and totype == Complex then
         return `Complex { exp, 0.f }
     end
     error("invalid conversion")
 end
 ```
 
-### 15.7 __init and__destruct: RAII
+### 15.7 No Implicit RAII Metamethods
 
-**Note:** Terra does *not* automatically call `__init` or `__destruct` when a variable enters or exits scope. While you can define these methods, Terra's philosophy avoids hidden control flow. If a type provides `__destruct`, it is the programmer's explicit responsibility to call it, typically by using the `defer` statement: `var obj = MyType.alloc(); defer obj:__destruct()`.
+**Note:** Terra does *not* provide `__init` or `__destruct` metamethods that are automatically called when a variable enters or exits scope. While you can define regular methods for cleanup, Terra's philosophy avoids hidden control flow. If a type provides a `destruct` method, it is the programmer's explicit responsibility to call it, typically by using the `defer` statement: `var obj = MyType.alloc(); defer obj:destruct()`.
 
 Because Terra uses raw by-value copying, implicit destructors would be disastrous: passing an object to a function by value would copy it, and if a destructor fired automatically at the end of that function, it would free the memory while the original caller still held a pointer. Therefore, RAII is strictly manual via `defer`.
 
@@ -926,6 +1093,37 @@ local function Array(T)
         end
     end)
     return ArrayImpl
+end
+```
+
+### 15.9 Lazy Layout and Initialization: __getentries and __staticinitialize
+
+When defining extremely complex or self-referential Exotypes (like an automated Object-Relational Mapper or a UI layout system), you may not know the exact fields of a struct until it is actually used.
+
+Terra supports lazy struct layout via `__getentries(self)`. If defined, the compiler calls this Lua function exactly *once*, the first time the struct's size or layout is needed (e.g., when it is allocated, or when `sizeof` is called). It must return a Lua list of field entries.
+
+```lua
+local struct DynamicEntity
+DynamicEntity.metamethods.__getentries = function(self)
+    -- Compute fields dynamically...
+    return terralib.newlist({
+        { field = "id", type = int32 },
+        { field = "name", type = rawstring },
+        -- A nested list defines a union block
+        { { field = "as_int", type = int }, { field = "as_float", type = float } }
+    })
+end
+```
+
+Immediately after the layout is finalized, Terra calls `__staticinitialize(self)`. This is the perfect place to build Virtual Method Tables (vtables) or perform reflection across the newly finalized fields (`self:getentries()`), because the struct type is now considered complete.
+
+### 15.10 Custom Type Names: __typename
+
+To override how a dynamically generated struct prints in compiler error messages or `tostring()`, define `__typename(self)`:
+
+```lua
+DynamicEntity.metamethods.__typename = function(self)
+    return "DynamicEntity_Custom"
 end
 ```
 
@@ -972,7 +1170,7 @@ The core API for loading Terra code matches Lua's.
 
 * `terralib.loadstring(code, [name, env])`: Compiles a string of mixed Lua/Terra code. Returns a Lua chunk function. If there is a syntax error, it returns `nil` and the error message.
 * `terralib.loadfile(filename, [env])`: Like `loadstring` but reads from a file.
-* `terralib.require(module)`: A drop-in replacement for Lua's `require` that also supports loading `.t` (Terra) files.
+* `require(module)`: A drop-in replacement for Lua's `require` that also supports loading `.t` (Terra) files (Terra adds a loader to `package.loaders`).
 Calling the resulting chunk function actually executes the top-level Lua code, which defines the Terra functions and types within the environment.
 
 ### 17.2 Type Constructors
@@ -1033,12 +1231,20 @@ The `terralib` namespace provides predicates to identify AST nodes and Terra obj
 * `terralib.memoize(fn)` - Wraps a function to cache its results based on arguments. Essential for generic type constructors to ensure `Vector(float) == Vector(float)`.
 
 **Labels:**
-* `terralib.label([displayname])` - Creates a new unique label for use with `goto`. Returns a label object that can be spliced into Terra code.
+* `terralib.label([displayname])` - Creates a new unique label for use with `goto`. Returns a label object that can be spliced into Terra code via `::[mylabel]::` and `goto [mylabel]`.
+
+**Lists:**
+* `terralib.newlist([table])` - Creates a Terra List object. This extends a standard Lua table with functional methods. It is the standard collection type used pervasively throughout the Terra compiler and metaprogramming APIs. Useful methods include:
+  * `list:insert(v)` / `list:insertall(other_list)`
+  * `list:map(fn)`: Returns a new list with `fn` applied to each element. `fn` can be a function or a string (representing a method name or field to extract).
+  * `list:mapi(fn)`: Like `map`, but `fn` receives `(index, value)`.
+  * `list:filter(fn)`: Returns a list containing only elements where `fn` returns true.
+  * `list:reduce(fn)` / `list:fold(init, fn)`: Standard functional reductions.
 
 **Version and Diagnostics:**
 * `terralib.printversion()` - Prints diagnostic information about Terra version, LLVM version, and target architecture.
 
-You use `symbol(type, [name])` to generate unique, hygienic identifiers for use inside quotes. This is critical for avoiding variable capture when generating code.
+You use `symbol(type, [name])` to generate unique, hygienic identifiers for use inside quotes. This is critical for avoiding variable capture when generating code. Note that `symbol()` creates variable identifiers, while `terralib.label()` creates control-flow destinations; they are distinct types.
 
 ### 17.7 Memory and Value Utilities
 
@@ -1076,7 +1282,49 @@ Terra provides low-level atomic operations matching LLVM's concurrency model:
 
 Memory orderings must be specified explicitly (`"relaxed"`, `"acquire"`, `"release"`, `"acq_rel"`, `"seq_cst"`). These map directly to the corresponding barrier instructions on the target hardware (e.g., `LOCK` prefixes on x86, `DMB` on ARM).
 
-### 17.10 Targets
+### 17.10 Inline Assembly
+
+Terra provides direct support for LLVM inline assembly via the built-in `terralib.asm` macro. This allows you to emit raw architecture-specific instructions.
+
+* `terralib.asm(return_type, asm_string, constraints, is_volatile, ...args)`
+
+```terra
+terra add_one(a : int)
+    -- Adds 1 to 'a' using x86 assembly.
+    -- "=r" means return in a register, "0" means input shares the same register as output 0.
+    return terralib.asm(int, "addl $$1, $1", "=r,0", true, a)
+end
+```
+*Note: The constraints string uses standard LLVM/GCC inline assembly constraint formatting.*
+
+### 17.11 CUDA and GPU Compilation
+
+Terra has built-in, first-class support for compiling kernels to NVIDIA PTX via `cudalib`. (Ensure `TERRA_ENABLE_CUDA` is on during build).
+
+* `terralib.cudacompile(module_table, [dump_ptx])`: Takes a table of Terra functions and compiles them to PTX.
+* `cudalib.nvvm_read_ptx_sreg_tid_x()`: Intrinsic to get thread ID.
+* `cudalib.sharedmemory(Type, N)`: Allocates `__shared__` memory.
+
+```lua
+local cudalib = require("cudalib")
+local tid_x = cudalib.nvvm_read_ptx_sreg_tid_x
+
+local terra my_kernel(data : &float)
+    var idx = tid_x()
+    data[idx] = data[idx] * 2.0
+end
+
+-- Compile the kernel
+local compiled = terralib.cudacompile({ my_kernel = my_kernel })
+
+terra run_kernel(data_ptr : &float)
+    -- Launch parameters: Grid X,Y,Z, Block X,Y,Z, Shared Mem, Stream
+    var launch_params = terralib.CUDAParams { 1, 1, 1, 256, 1, 1, 0, nil }
+    compiled.my_kernel(&launch_params, data_ptr)
+end
+```
+
+### 17.12 Targets
 
 Terra supports cross-compilation by instantiating explicit target objects: `local target = terralib.newtarget({Triple = "wasm32-unknown-unknown"})`.
 
@@ -1086,18 +1334,32 @@ You can specify the `CPU` (e.g., `"skylake"`) and specific LLVM `Features` (e.g.
 
 ## 18. C Interop
 
-### 18.1 terralib.includec()
+### 18.1 terralib.includec() and No Standard Library
+
+**Terra does not have a built-in standard library.** There is no `print`, `malloc`, or `math` module native to Terra code. Instead, you access the standard C library using C interop.
 
 The `terralib.includec("header.h")` function is the gateway to C interop. Internally, Terra invokes the Clang compiler frontend to parse the C header file. Clang resolves all `#include` directives, macros, and type definitions using the host system's standard C search paths.
+
+**WARNING ON C++:** `includec` uses Clang's **C frontend**, not C++. It cannot parse C++ classes, templates (`std::vector`), namespaces, or function overloading. If you must interop with a C++ library, you must write a `extern "C"` wrapper API in C++, compile it to a shared library, and `includec` the C-compatible wrapper header.
+
+```lua
+local C = terralib.includec("stdio.h")
+local stdlib = terralib.includec("stdlib.h")
+
+terra my_func()
+    C.printf("Hello World\n")
+    var ptr = [&int](stdlib.malloc(sizeof(int) * 10))
+end
+```
 
 The function returns a Lua table that acts as a namespace. If the header defined `int foo();` and `typedef int my_int;`, the resulting Lua table `C` will contain `C.foo` (a Terra function object) and `C.my_int` (a Terra type object). You can pass additional arguments to Clang, such as `-I/custom/path` or `-DDEBUG=1`, as trailing arguments to `includec`.
 
 ### 18.2 What Gets Imported
 
-When `includec` parses a header:
+When `includec` parses a header into a Lua table (e.g., `local C = terralib.includec(...)`):
 
-* **Functions** become Terra function objects ready to be called.
-* **Structs** become Terra struct types (with exact C layout matching).
+* **Functions** become Terra function objects ready to be called (e.g., `C.printf`).
+* **Structs** become Terra struct types (with exact C layout matching). Note that in Terra, you access them via the namespace table without the `struct` keyword: `var s : C.tm` (not `struct C.tm`).
 * **Typedefs** are resolved to their underlying Terra types.
 * **Enums** are imported as simple integer constants in the Lua table.
 * **Simple Macros** (e.g., `#define MAX_SIZE 100`) are evaluated and imported as Lua numbers.
@@ -1115,13 +1377,29 @@ Terra is designed for strict Application Binary Interface (ABI) compatibility wi
 
 **Exceptions:** Terra does not currently support C bitfields. Additionally, while Terra can *call* C functions that use `varargs` (`...`), it handles the ABI promotion rules automatically, but complex vararg interactions across module boundaries require careful type casting.
 
-### 18.5 The includecstring Pattern
+### 18.5 Pointers, void*, and Array FFI Gotchas
+
+When calling C functions from Terra, LLMs frequently hallucinate C semantics that violate Terra's strict type system. Keep these rules in mind:
+
+*   **`void*` is `&opaque`:** C functions that return or accept `void*` will have the Terra type `&opaque`. You **must explicitly cast** pointers using the `[Type](value)` syntax.
+    *   *Wrong:* `var p : &int = C.malloc(sizeof(int))`
+    *   *Right:* `var p = [&int](C.malloc(sizeof(int)))`
+*   **Strings are `&int8`:** C functions taking `char*` or `const char*` expect a Terra `&int8` (also aliased as `rawstring`). Terra string literals (`"hello"`) natively evaluate to `&int8` and can be passed directly.
+*   **Out Parameters (Pass-by-Reference):** To pass a value by reference to a C function, you must allocate it on the stack using `var` and pass its address using `&`.
+    *   *Right:* `var out_val : int; C.some_c_func(&out_val); return out_val`
+*   **Arrays do NOT decay to pointers:** In C, passing an array `int arr[5]` to a function expecting `int*` implicitly decays the array to a pointer. **Terra does not do this implicitly.** If you have a Terra array `var arr : int[5]`, you must explicitly pass a pointer to the first element, or cast the array pointer:
+    *   *Wrong:* `C.takes_int_ptr(arr)` (This attempts a by-value copy of the entire array!)
+    *   *Right:* `C.takes_int_ptr(&arr[0])`
+    *   *Right:* `C.takes_int_ptr([&int](&arr))`
+*   **Function Pointer Callbacks:** If a C function takes a callback (e.g., `qsort`), you can pass a Terra function directly. If you want to pass a *Lua* function as the callback, you must cast it first: `var cb = terralib.cast({&opaque, &opaque} -> int, my_lua_func)`. *Note: The Lua function must not throw errors that escape into the C caller, and the cast `cdata` object must not be garbage collected by Lua while C might still call it.*
+
+### 18.6 The includecstring Pattern
 
 Instead of reading a header from disk, `terralib.includecstring([[ ... C code ... ]])` compiles a raw string of C code.
 
 This is an incredibly common idiom in Terra for working around the limitations of `includec`. If a C library relies heavily on macros, you can use `includecstring` to write a small C wrapper function directly inside your Lua script that invokes the macro, thus exposing it as a proper C function that Terra can call without needing external `.c` wrapper files.
 
-### 18.6 Linking C Libraries
+### 18.7 Linking C Libraries
 
 Importing a header via `includec` *only* imports the declarations (the types and function signatures). It does not link the actual executable code. If you try to call an imported function and get an "undefined symbol" error during JIT compilation, you must dynamically load the implementation.
 
@@ -1148,6 +1426,11 @@ This generates a standard native object file. You can then use your standard sys
 You can inspect the LLVM IR generated by Terra by passing `type = "llvmir"` to `saveobj`. This outputs a human-readable `.ll` file. This is invaluable for verifying that loops were vectorized, constants were folded, or specific intrinsic optimizations were applied.
 
 You can also output LLVM bitcode (`type = "bitcode"`). This emits a `.bc` file. This is the standard entry point for using Terra with external LLVM tools like `opt` (for manual optimization passes) or compiling to WebAssembly (WASM) via the Emscripten toolchain (passing the `.bc` file directly to `emcc`).
+
+Alternatively, for quick debugging in a script, you can print the entire LLVM module representing the current JIT compilation state by calling:
+```lua
+terralib.dumpmodule()
+```
 
 ### 19.4 Cross Compilation
 
@@ -1203,7 +1486,7 @@ Because Terra lacks a `restrict` keyword, LLVM often conservatively assumes poin
 
 Terra exposes atomic operations through the `terralib.atomicrmw` (Read-Modify-Write) and `terralib.cmpxchg` (Compare-And-Exchange) APIs.
 
-* `atomicrmw(op, ptr, val, {ordering="..."})`: Safely applies `op` (like `"add"`, `"xchg"`) to the memory at `ptr`. The `ptr` must point to an integer type. It returns the *old* value that was at the memory location before the operation.
+* `atomicrmw(op, ptr, val, {ordering="..."})`: Safely applies `op` (like `"add"`, `"xchg"`, `"fadd"`) to the memory at `ptr`. The `ptr` must point to an integer type (or floating-point for `fadd`/`fsub`). It returns the *old* value that was at the memory location before the operation.
 
     ```terra
     var i = 1
@@ -1278,8 +1561,8 @@ The `lex` object exposes methods to traverse the token stream:
 * `lex.default`: Matches any token type.
 
 **Token Consumption and Matching:**
-* `lex:expect(type_or_value)`: Consumes and returns the token if it matches, otherwise throws a formatted parse error.
-* `lex:expectmatch(opening_type, opening_token, line)`: Like `expect` but for matching bracket pairs (e.g., `)`, `}`, `]`).
+* `lex:expect(tokentype)`: Consumes and returns the token if it matches, otherwise throws a formatted parse error.
+* `lex:expectmatch(tokentype, openingtokentype, linenumber)`: Like `expect` but for matching bracket pairs (e.g., `lex:expectmatch('}', '{', line)`).
 * `lex:matches(type_or_value)`: Returns true if the current token matches, without consuming it.
 * `lex:lookaheadmatches(type_or_value)`: Returns true if the next token matches, without consuming it.
 * `lex:nextif(type_or_value)`: Consumes and returns the token if it matches, otherwise returns `false`.
@@ -1303,7 +1586,7 @@ Tokens returned by lexer methods are Lua tables with the following fields:
 
 * `type`: The token type string (e.g., `"<number>"`, `"<name>"`, `"<string>"`, `"<eof>"`, or a specific keyword/operator like `"+"`, `"if"`, etc.).
 * `value`: The actual value for names and strings (the identifier name or string content).
-* `valuetype`: For number tokens, the numeric type (e.g., `"uint64"`, `"double"`, `"float"`).
+* `valuetype`: For number tokens, the Terra type object of the literal (e.g., `uint64`, `double`, `float`).
 * `linenumber`: The source line number where the token appears.
 * `offset`: The character offset in the source file.
 * `filename`: The source filename.
@@ -1312,7 +1595,7 @@ Example of examining a number token:
 ```lua
 local t = lex:expect(lex.number)
 print(t.value)       -- the numeric value
-print(t.valuetype)   -- "uint64", "double", etc.
+print(t.valuetype)   -- Terra type object (e.g., uint64, double)
 print(t.linenumber)  -- line number in source
 ```
 
@@ -1325,7 +1608,7 @@ The parsing function must:
 2. Return a **constructor function** that takes an environment function `env_fn` as its argument
 3. The constructor returns the final value (a Lua value, Terra Quote, or AST) that will be spliced into the Terra code
 
-The `env_fn` allows access to the surrounding lexical environment's variables when the constructor is called during AST finalization.
+The `env_fn` allows access to the surrounding lexical environment's variables. **CRITICAL:** If your DSL refers to Lua variables defined outside the DSL block, the parser *must* register those variable names using `lex:ref("varname")` during the parsing phase. If you fail to call `lex:ref()`, Terra's scope analyzer will garbage-collect or ignore the variable, and `env_fn()["varname"]` will be `nil` when the constructor runs!
 
 Here is an example that sums a comma-separated list of numbers at compile time:
 
@@ -1474,23 +1757,55 @@ For mathematically rich DSLs, you often need to handle operator precedence (e.g.
 
 The standard compilation pipeline for a Terra DSL is:
 
-1. **Parse:** The lexer hook transforms the token stream into a custom Lua AST (e.g., nested Lua tables like `{ kind = "BinaryOp", op = "+", lhs = ..., rhs = ... }`).
+1. **Parse:** The lexer hook transforms the token stream into a custom Lua AST.
 2. **Analyze/Transform:** You write pure Lua functions to traverse this AST, performing domain-specific optimizations (like dead code elimination or loop fusion).
-3. **Generate:** You write a recursive Lua function `codegen(node)` that matches on `node.kind` and returns a Terra Quote. The final Quote is spliced into the user's Terra code. Additionally, the DSL can dynamically call `terralib.types.newstruct()` to provision tailored data structures required by the generated code.
+3. **Generate:** You write a recursive Lua function `codegen(node)` that matches on the node type and returns a Terra Quote. The final Quote is spliced into the user's Terra code.
 
-### 23.4 Type Checking in DSLs
+### 23.4 Abstract Syntax Description Language (ASDL)
+
+Instead of building ad-hoc Lua tables for your AST, Terra bundles a powerful ASDL library (`require("asdl")`) specifically for building compiler Intermediate Representations (IR). ASDL allows you to define typed algebraic data types (variants/enums) succinctly.
+
+```lua
+local asdl = require("asdl")
+local IR = asdl.NewContext()
+
+IR:Define [[
+    -- A tagged union (variant)
+    Expr = BinOp(Expr lhs, string op, Expr rhs)
+         | Number(number val)
+         | Var(string name)
+         
+    -- A list is denoted by '*'
+    Stmt = Block(Stmt* statements)
+         | Assign(string name, Expr val)
+]]
+
+-- Instantiating an AST node:
+local my_ast = IR.BinOp(IR.Number(5), "+", IR.Number(10))
+
+-- Checking node types during codegen:
+if IR.BinOp:isclassof(node) then
+    local lhs_quote = codegen(node.lhs)
+    local rhs_quote = codegen(node.rhs)
+    return quote operator(node.op, [lhs_quote], [rhs_quote]) end
+end
+```
+
+ASDL enforces strict construction types and automatically provides `.kind` properties (e.g., `node.kind == "BinOp"`). It is highly recommended for any non-trivial Terra DSL.
+
+### 23.5 Type Checking in DSLs
 
 Because Terra macros and compiler hooks receive Quotes representing AST nodes, you can perform domain-specific type checking before generating the final code.
 
 You can query `quote_node:gettype()` to verify that an injected Terra expression matches the DSL's requirements (e.g., ensuring the `where` clause expression evaluates to a `bool`). If the types do not match, you can throw a Lua `error()` or use `lex:error()` if inside the parsing phase. Because this validation happens entirely in Lua during the compilation phase, invalid DSL code is caught strictly at compile-time with zero runtime cost.
 
-### 23.5 The thing(params) children end Pattern
+### 23.6 The thing(params) children end Pattern
 
 The `thing(params) children end` pattern is ubiquitous for hierarchical DSLs like state machines or UI layouts.
 
 The parser encounters the `thing` token, parses its parameters (often using `lex:terraexpr()`), and then enters a `while not lex:matches("end")` loop to recursively parse children. The resulting AST is a tree of Lua tables: `{ kind = "state", name = "Idle", children = { ... } }`. The `codegen` phase recursively transforms this tree into Terra code. For a state machine, the generator might emit a `struct` representing the machine, an `enum` for the states, and a large `if/elseif` or `goto` block representing the transitions based on the parsed children.
 
-### 23.6 DSL Examples
+### 23.7 DSL Examples
 
 Terra has been used to build numerous sophisticated DSLs:
 
@@ -1780,15 +2095,15 @@ Quote objects (AST nodes passed to macros or escapes) expose:
 * `quote:astype()`: Tries to interpret the quote as a Terra type (used in macros expecting type arguments).
 * `quote:asvalue()`: If the node represents a compile-time constant literal, this returns the actual Lua value (e.g., the number `5`). If not constant, it throws an error.
 * `quote:islvalue()`: Returns true if the expression represents a memory location that can be assigned to (e.g., a variable or array index), false if it is a transient rvalue.
-* `quote:printpretty()`: Prints an untyped representation of the quote (useful for debugging macros).
 * `quote.tree`: Direct access to the internal Lua table representing the raw AST structure.
+* `quote.tree:is("literal")`: Checks if the internal AST node is of a specific kind (e.g. `"literal"`, `"operator"`, `"var"`, `"apply"`, `"index"`).
 
 ### 27.6 Lexer API (for language extensions)
 
 The Lexer object passed to language extensions provides:
 
 * `lex:next()`: Consumes 1 token, returns `{type, value, linenumber, offset}`.
-* `lex:peek()`: Returns the next token without consuming.
+* `lex:lookahead()`: Returns the next token without consuming.
 * `lex:expect(tok)`: Consumes 1 token if it matches `tok`, else errors.
 * `lex:matches(tok)`: Returns boolean indicating if next token matches `tok`.
 * `lex:nextif(tok)`: Consumes and returns 1 token if it matches `tok`, else returns nil.
@@ -1833,9 +2148,9 @@ Declaring `var x : int` allocates stack space but **does not initialize the memo
 
 This is intentional: zero-initializing every variable incurs a measurable performance cost in tight loops. The programmer must maintain strict discipline to initialize variables before reading them. A common debugging pattern is to temporarily alter your struct constructors or variable declarations to explicitly initialize memory to a known poison value (like `0xDEADBEEF`) to rapidly flush out uninitialized read bugs.
 
-### 28.6 __destruct and Function Arguments
+### 28.6 Destructors and Function Arguments
 
-If you implement an implicit destructor mechanism (e.g., via macros or `defer`), passing a struct by value is extremely dangerous.
+If you implement an explicit destructor mechanism (e.g., via macros or `defer`), passing a struct by value is extremely dangerous.
 
 When you pass by value, the struct is shallow-copied. When the callee function exits, the copy goes out of scope and the destructor fires, freeing the internal pointers. However, the caller's original struct still holds those same pointers, which are now dangling. A subsequent access or double-free will crash the program. The absolute rule when implementing RAII in Terra is: **types managing heap resources must strictly forbid by-value copying**, either through compiler enforcement via macros or strict developer discipline to pass by pointer.
 
@@ -1853,7 +2168,7 @@ This makes cross-compilation treacherous. If you compile on macOS targeting Wind
 
 ### 28.9 Macro Arguments Are Untyped Until Analyzed
 
-A classic beginner mistake is writing a macro like `macro(function(ctx, x) if x == 5 then ... end)`. This fails silently or bizarrely because `x` is not the number `5`; it is a Lua table representing the AST Node for a literal `5`.
+A classic beginner mistake is writing a macro like `macro(function(x) if x == 5 then ... end)`. This fails silently or bizarrely because `x` is not the number `5`; it is a Lua table representing the AST Node for a literal `5`.
 
 You cannot evaluate the logic of the node natively in Lua unless you use `x:asvalue()` (which only works for constants). For runtime variables, the macro must inspect `x:gettype()` and emit a Terra Quote containing the actual runtime `if` statement: `return quote if x == 5 then ... end end`.
 

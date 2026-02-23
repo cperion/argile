@@ -17,18 +17,20 @@ function P.Span(line, context)
 end
 
 -- Create a span from Terra lexer
--- Terra's lexer doesn't expose column/file directly, so we use line + current token
+-- Terra's lexer exposes linenumber via the cur() token
 function P.SpanFromLexer(lex)
-    -- Terra lexer has line tracking internally
-    -- Try to get line from lexer's internal state (may not be available)
     local line = 1
     
     -- Build context string from current token
     local context = ""
     if lex then
         local cur = lex:cur()
-        if cur and cur.value then
-            context = tostring(cur.value)
+        if cur then
+            -- Extract line number from Terra token (Section 22.3)
+            line = cur.linenumber or 1
+            if cur.value then
+                context = tostring(cur.value)
+            end
         end
     end
     

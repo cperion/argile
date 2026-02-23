@@ -1,4 +1,5 @@
 local ui = require("src.arena")
+local C = terralib.includec("string.h")
 
 ui.Array = terralib.memoize(function(T)
     local ArrayT = struct {
@@ -51,7 +52,9 @@ ui.Array = terralib.memoize(function(T)
         if index >= 0 and index < self.length then
             return self.internalArray[index]
         end
+        -- Zero-initialize to prevent garbage data (Terra Docs 28.5)
         var empty : T
+        C.memset(&empty, 0, sizeof(T))
         return empty
     end
     ArrayT.methods.getValue:setinlined(true)
@@ -73,7 +76,9 @@ ui.Array = terralib.memoize(function(T)
             self.internalArray[index] = self.internalArray[self.length]
             return removed
         end
+        -- Zero-initialize to prevent garbage data (Terra Docs 28.5)
         var empty : T
+        C.memset(&empty, 0, sizeof(T))
         return empty
     end
     ArrayT.methods.removeSwapback:setinlined(true)
@@ -104,7 +109,9 @@ ui.Slice = terralib.memoize(function(T)
         if index >= 0 and index < self.length then
             return self.internalArray[index]
         end
+        -- Zero-initialize to prevent garbage data (Terra Docs 28.5)
         var empty : T
+        C.memset(&empty, 0, sizeof(T))
         return empty
     end
     SliceT.methods.getValue:setinlined(true)

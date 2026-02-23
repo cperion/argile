@@ -448,6 +448,131 @@ expect_v3_error("Reserved part root error", [=[
     end
 ]=], "part name 'root' is reserved")
 
+-- Test: Non-variant bare-name args resolve from caller environment
+print("\nTesting Non-Variant Env Resolution...")
+
+-- Create a themed component that takes a `skin` prop (not a variant)
+component env_probe(props)
+    variant tone = a | b
+    root
+        id(props.id)
+        style
+            bg(props.skin.bg)
+        end
+        text(props.label)
+    end
+end
+
+-- `my_skin` is a real Lua table — when passed as `skin = my_skin` the
+-- lowering must resolve the Symbol to the table, not the string "my_skin".
+local my_skin = { bg = { r = 0.1, g = 0.2, b = 0.3, a = 1.0 } }
+
+local env_node = argile
+    env_probe(id = "env1", label = "Hello", skin = my_skin, tone = a)
+    end
+end
+
+assert(env_node.id == "env1", "env_probe id mismatch")
+-- The bg should be the actual table from my_skin, not a string
+assert(type(env_node.style_ops) == "table", "Expected style_ops")
+-- Find the bg op and check its value came through as a table
+local found_bg = false
+for _, op in ipairs(env_node.style_ops) do
+    if op.name == "bg" then
+        assert(type(op.args[1]) == "table", "bg arg should be the skin table value, not a string")
+        assert(op.args[1].r == 0.1, "bg.r should be 0.1 from my_skin")
+        found_bg = true
+    end
+end
+assert(found_bg, "Expected bg style op from skin prop")
+print("  Non-variant env resolution: PASS")
+
+-- Test: Variant args still resolve to strings (not env lookup)
+local a_value = "this should NOT appear"
+local env_node2 = argile
+    env_probe(id = "env2", label = "Test", skin = my_skin, tone = a)
+    end
+end
+-- `tone = a` should resolve to the string "a", not the local `a_value`
+assert(env_node2._argile_v3_component == "env_probe", "Component mismatch")
+print("  Variant args still resolve as strings: PASS")
+
+-- Test: [splice] in argile body
+print("\nTesting [splice] in argile body...")
+
+local pre_built = argile
+    el
+        id("spliced_child")
+        layout
+            width_fixed(100)
+            height_fixed(50)
+        end
+    end
+end
+
+local splice_result = argile
+    el
+        id("splice_parent")
+        layout
+            width_grow()
+            height_grow()
+            dir(top_to_bottom)
+        end
+
+        text("before")
+            id("before_txt")
+        end
+
+        [pre_built]
+
+        text("after")
+            id("after_txt")
+        end
+    end
+end
+
+assert(splice_result.id == "splice_parent", "Splice parent id mismatch")
+assert(#splice_result.children == 3, "Expected 3 children (text + splice + text), got " .. #splice_result.children)
+assert(splice_result.children[1].text == "before", "First child should be 'before' text")
+assert(splice_result.children[2].id == "spliced_child", "Second child should be the spliced node")
+assert(splice_result.children[3].text == "after", "Third child should be 'after' text")
+print("  [splice] inline in argile body: PASS")
+
+-- Test: [splice] at top level of argile ... end
+local top_splice = argile
+    [pre_built]
+end
+assert(top_splice.id == "spliced_child", "Top-level splice should return the node directly")
+print("  [splice] at top level: PASS")
+
+-- Test: [splice] with a list of nodes
+local pre_built_list = argile
+    el
+        id("list_a")
+    end
+end
+local pre_built_list2 = argile
+    el
+        id("list_b")
+    end
+end
+local list_items = { pre_built_list, pre_built_list2 }
+
+local splice_list_result = argile
+    el
+        id("list_parent")
+        layout
+            dir(left_to_right)
+        end
+        [list_items]
+    end
+end
+
+assert(#splice_list_result.children == 2, "Expected 2 children from spliced list, got " .. #splice_list_result.children)
+assert(splice_list_result.children[1].id == "list_a", "First spliced list child id mismatch")
+assert(splice_list_result.children[2].id == "list_b", "Second spliced list child id mismatch")
+print("  [splice] with list of nodes: PASS")
+
 -- Summary
 print("\n" .. string.rep("=", 50))
 print("V3 Integration Tests (Basic)")

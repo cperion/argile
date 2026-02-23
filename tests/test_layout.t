@@ -1087,11 +1087,7 @@ terra test_hover_and_element_data()
     end
 
     var hid = ui.HashString(ui.String { isStaticallyAllocated = true, length = 9, chars = "hoverable" }, 0)
-    var pointer: ui.Vector2
-    pointer.x = 20
-    pointer.y = 20
-    ui.SetPointerState(pointer, false)
-
+    
     ui.BeginLayout(200, 150)
     ui.OpenElementWithId(hid)
     var elem = ctx:getOpenLayoutElement()
@@ -1115,6 +1111,11 @@ terra test_hover_and_element_data()
     end
     ui.CloseElement()
     ui.EndLayout()
+
+    var pointer: ui.Vector2
+    pointer.x = 20
+    pointer.y = 20
+    ui.SetPointerState(pointer, false)
 
     hoverCallbackCount = 0
     ui.OnHover(hid, hover_callback, nil)

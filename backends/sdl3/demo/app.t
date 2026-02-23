@@ -5,9 +5,13 @@ local bindings = require("backends.sdl3.bindings")
 local C = bindings.C
 local arg = bindings.arg
 local sdl = bindings.sdl
+local sdl_text = require("backends.sdl3.text_backend").create {
+    api = arg,
+    sdl = sdl,
+}
 
 -- Default font path
-local DEFAULT_FONT_PATH = "/usr/share/fonts/liberation-narrow/LiberationSansNarrow-Regular.ttf"
+local DEFAULT_FONT_PATH = "backends/sdl3/assets/fonts/IBMPlexSans-Text.ttf"
 
 -- SDL event types (from SDL_events.h)
 local SDL_EVENT_QUIT = 0x100
@@ -27,7 +31,7 @@ local SDLK_R = 0x72  -- 'r'
 local struct DemoState {
     renderer : &sdl.SDL_Renderer,
     window : &sdl.SDL_Window,
-    font : &sdl.TTF_Font,
+    textBackend : sdl_text.TextBackend,
 }
 
 terra color_to_u8(v: float) : uint8
@@ -48,29 +52,6 @@ terra dup_cstring(s: arg.StringSlice) : &int8
     C.memcpy(p, s.chars, [uint64](n))
     p[n] = 0
     return p
-end
-
-terra measure_text_callback(text: &arg.StringSlice, config: &arg.TextConfig, _user_data: &opaque, out: &arg.Dimensions) : int32
-    if out == nil then return 0 end
-    
-    out.width = 0.0
-    out.height = 0.0
-    
-    if text == nil then return 1 end
-    
-    -- Simple estimation
-    var font_size: int = 16
-    if config ~= nil and config.fontSize > 0 then
-        font_size = [int](config.fontSize)
-    end
-    
-    var char_count: int = [int](text.length)
-    if char_count < 0 then char_count = 0 end
-    
-    out.width = [float](char_count) * [float](font_size) * 0.6
-    out.height = [float](font_size)
-    
-    return 1
 end
 
 terra draw_rectangle(renderer: &sdl.SDL_Renderer, cmd: &arg.RenderCommand)
@@ -127,49 +108,6 @@ terra draw_border(renderer: &sdl.SDL_Renderer, cmd: &arg.RenderCommand)
     sdl.SDL_RenderFillRect(renderer, &right)
 end
 
--- Following working pattern: pass font explicitly, use direct C calls
-terra draw_text(renderer: &sdl.SDL_Renderer, font: &sdl.TTF_Font, cmd: &arg.RenderCommand)
-    if font == nil then return end
-    
-    var t = cmd.renderData.text
-    if t.stringContents.chars == nil or t.stringContents.length <= 0 then
-        return
-    end
-    
-    var text_ptr = t.stringContents.chars
-    var text_len = t.stringContents.length
-    
-    -- Create SDL_Color by value (following working pattern)
-    var color: sdl.SDL_Color
-    color.r = color_to_u8(t.textColor.r)
-    color.g = color_to_u8(t.textColor.g)
-    color.b = color_to_u8(t.textColor.b)
-    color.a = color_to_u8(t.textColor.a)
-    
-    -- Use direct C function call (following working pattern)
-    var surface = sdl.TTF_RenderText_Blended(font, text_ptr, [uint64](text_len), color)
-    if surface == nil then return end
-    
-    var texture = sdl.SDL_CreateTextureFromSurface(renderer, surface)
-    sdl.SDL_DestroySurface(surface)
-    
-    if texture == nil then return end
-    
-    var bb = cmd.boundingBox
-    var dst: sdl.SDL_FRect
-    dst.x = bb.x
-    dst.y = bb.y
-    
-    var tex_w: float = 0
-    var tex_h: float = 0
-    sdl.SDL_GetTextureSize(texture, &tex_w, &tex_h)
-    dst.w = tex_w
-    dst.h = tex_h
-    
-    sdl.SDL_RenderTexture(renderer, texture, nil, &dst)
-    sdl.SDL_DestroyTexture(texture)
-end
-
 terra draw_paint(renderer: &sdl.SDL_Renderer, cmd: &arg.RenderCommand)
     var p = cmd.renderData.paint
     if p.ops == nil or p.count == 0 then return end
@@ -208,8 +146,7 @@ terra render_commands(state: &DemoState, cmds: &arg.RenderCommand, count: int32)
         elseif cmd.commandType == [uint8](arg.RENDER_BORDER) then
             draw_border(state.renderer, cmd)
         elseif cmd.commandType == [uint8](arg.RENDER_TEXT) then
-            -- Pass font from state (following working pattern)
-            draw_text(state.renderer, state.font, cmd)
+            sdl_text.draw_text(state.renderer, &state.textBackend, cmd)
         elseif cmd.commandType == [uint8](arg.RENDER_PAINT) then
             draw_paint(state.renderer, cmd)
         end
@@ -235,12 +172,17 @@ terra run_demo() : int32
     var state: DemoState
     state.renderer = nil
     state.window = nil
-    state.font = nil
-    
-    -- Load font into state
-    state.font = sdl.TTF_OpenFont(DEFAULT_FONT_PATH, 16.0)
-    if state.font == nil then
+    state.textBackend:init()
+
+    if not state.textBackend:register_font(0, DEFAULT_FONT_PATH) then
         C.printf("Failed to load font: %s\n", DEFAULT_FONT_PATH)
+        sdl.TTF_Quit()
+        sdl.SDL_Quit()
+        return 1
+    end
+    if state.textBackend:get_font(0, [uint16](16)) == nil then
+        C.printf("Failed to load font: %s\n", DEFAULT_FONT_PATH)
+        state.textBackend:shutdown()
         sdl.TTF_Quit()
         sdl.SDL_Quit()
         return 1
@@ -250,7 +192,7 @@ terra run_demo() : int32
     state.window = sdl.SDL_CreateWindow("Argile + SDL3 Demo", 1280, 720, 0)
     if state.window == nil then
         C.printf("Failed to create window\n")
-        sdl.TTF_CloseFont(state.font)
+        state.textBackend:shutdown()
         sdl.TTF_Quit()
         sdl.SDL_Quit()
         return 1
@@ -261,7 +203,7 @@ terra run_demo() : int32
     if state.renderer == nil then
         C.printf("Failed to create renderer\n")
         sdl.SDL_DestroyWindow(state.window)
-        sdl.TTF_CloseFont(state.font)
+        state.textBackend:shutdown()
         sdl.TTF_Quit()
         sdl.SDL_Quit()
         return 1
@@ -274,7 +216,7 @@ terra run_demo() : int32
         C.printf("Failed to allocate arena\n")
         sdl.SDL_DestroyRenderer(state.renderer)
         sdl.SDL_DestroyWindow(state.window)
-        sdl.TTF_CloseFont(state.font)
+        state.textBackend:shutdown()
         sdl.TTF_Quit()
         sdl.SDL_Quit()
         return 1
@@ -291,7 +233,7 @@ terra run_demo() : int32
         C.free(arena_mem)
         sdl.SDL_DestroyRenderer(state.renderer)
         sdl.SDL_DestroyWindow(state.window)
-        sdl.TTF_CloseFont(state.font)
+        state.textBackend:shutdown()
         sdl.TTF_Quit()
         sdl.SDL_Quit()
         return 1
@@ -302,7 +244,7 @@ terra run_demo() : int32
         C.free(arena_mem)
         sdl.SDL_DestroyRenderer(state.renderer)
         sdl.SDL_DestroyWindow(state.window)
-        sdl.TTF_CloseFont(state.font)
+        state.textBackend:shutdown()
         sdl.TTF_Quit()
         sdl.SDL_Quit()
         return 1
@@ -311,7 +253,7 @@ terra run_demo() : int32
     var demo_ids: arg.ArgileDemoIds
     arg.ArgileDemoGetIds(&demo_ids)
     
-    arg.SetMeasureTextFunctionForContext(ctx, measure_text_callback, nil)
+    arg.SetMeasureTextFunctionForContext(ctx, sdl_text.measure_text, [&opaque](&state.textBackend))
     
     var demo_focus = false
     var demo_selected = false
@@ -323,6 +265,8 @@ terra run_demo() : int32
     var last_ticks = sdl.SDL_GetTicks()
     
     while running do
+        var mouse_pressed = false
+        var mouse_released = false
         var event: sdl.SDL_Event
         while sdl.SDL_PollEvent(&event) do
             if event.type == SDL_EVENT_QUIT then
@@ -344,9 +288,17 @@ terra run_demo() : int32
                 mouse_x = event.motion.x
                 mouse_y = event.motion.y
             elseif event.type == SDL_EVENT_MOUSE_BUTTON_DOWN then
+                mouse_x = event.button.x
+                mouse_y = event.button.y
                 mouse_down = true
             elseif event.type == SDL_EVENT_MOUSE_BUTTON_UP then
+                mouse_x = event.button.x
+                mouse_y = event.button.y
                 mouse_down = false
+                mouse_released = true
+            end
+            if event.type == SDL_EVENT_MOUSE_BUTTON_DOWN then
+                mouse_pressed = true
             end
         end
         
@@ -364,8 +316,8 @@ terra run_demo() : int32
         input.pointer_x = mouse_x
         input.pointer_y = mouse_y
         input.pointer_down = mouse_down
-        input.pointer_pressed = false
-        input.pointer_released = false
+        input.pointer_pressed = mouse_pressed
+        input.pointer_released = mouse_released
         input.scroll_delta_x = 0.0
         input.scroll_delta_y = 0.0
         input.delta_time = dt
@@ -389,7 +341,7 @@ terra run_demo() : int32
     C.free(arena_mem)
     sdl.SDL_DestroyRenderer(state.renderer)
     sdl.SDL_DestroyWindow(state.window)
-    sdl.TTF_CloseFont(state.font)
+    state.textBackend:shutdown()
     sdl.TTF_Quit()
     sdl.SDL_Quit()
     return 0
