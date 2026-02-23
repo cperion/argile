@@ -2,12 +2,24 @@
 
 ## Status
 
-- Proposed architecture and implementation plan
-- Intended to guide the next C API effort after the rename cleanup pass
-- This document defines the full target surface and migration path
+- Active architecture and implementation plan (source of truth)
 - Reoriented after confirming `terralib.saveobj` export constraints:
   - shared-library `ui.capi` can export Terra functions only
   - the current Lua/Terra metaprogramming compiler cannot be exported directly
+- Canonical-path work implemented so far (host-side):
+  - canonical AST module and compiler seam (`src/lang/ast.t`, `compileAstProgram*`)
+  - parser/AST/compiler refactors to reduce parser-closure leakage (structured AST expressions for token/path/call cases)
+  - host-side handle-based AST builder (`src/capi_dsl_ast.t`)
+  - host-side compile entrypoints split into `src/capi_dsl_compile.t`
+  - host API aggregator (`src/capi_dsl_host.t`) exposed via `ui.GetDslAstApi()`
+  - host-side compile diagnostics helpers (`TryCompile*`, last compile error)
+  - source metadata/span attachment APIs on AST objects
+  - parser-vs-host-AST conformance test (`tests/test_dsl_ast_parity.t`)
+  - bindings-author guide + reference wrapper example
+- Not yet implemented:
+  - runtime shared-library AST builder/compile in `ui.capi` (future/optional phase)
+  - Terra-exportable semantic lowering path for runtime AST compilation
+  - full parser expression canonicalization (some general expressions still use `LuaExpr`)
 
 ## Why This Exists
 

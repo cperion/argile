@@ -23,7 +23,11 @@ theme design
     token color.text = { r = 0.95, g = 0.96, b = 0.98, a = 1.0 }
     token color.accent = { r = 0.95, g = 0.62, b = 0.27, a = 1.0 }
     token color.hover = { r = 0.25, g = 0.35, b = 0.70, a = 1.0 }
+    token color.active = { r = 0.20, g = 0.28, b = 0.52, a = 1.0 }
+    token color.focus = { r = 0.22, g = 0.45, b = 0.30, a = 1.0 }
     token color.selected = { r = 0.55, g = 0.35, b = 0.14, a = 1.0 }
+    token color.disabled = { r = 0.33, g = 0.33, b = 0.35, a = 1.0 }
+    token color.text_hover = { r = 1.0, g = 0.88, b = 0.32, a = 1.0 }
 
     recipe card()
         style
@@ -58,9 +62,24 @@ component Badge(props)
                 bg(token(design.color.hover))
             end
         end
+        state active
+            style
+                bg(token(design.color.active))
+            end
+        end
+        state focus
+            style
+                bg(token(design.color.focus))
+            end
+        end
         state selected
             style
                 bg(token(design.color.selected))
+            end
+        end
+        state disabled
+            style
+                bg(token(design.color.disabled))
             end
         end
 
@@ -87,11 +106,21 @@ local compiled_dsl_scene = argile
             text("F")
                 id("fill_text")
                 use(design.label())
+                state hover
+                    typography
+                        color(token(design.color.text_hover))
+                    end
+                end
             end
         end
         text("B")
             id("body_text")
             use(design.label())
+            state hover
+                typography
+                    color(token(design.color.text_hover))
+                end
+            end
         end
     end
 end
@@ -126,7 +155,11 @@ local function build_ast_program()
         ["color.text"] = { r = 0.95, g = 0.96, b = 0.98, a = 1.0 },
         ["color.accent"] = { r = 0.95, g = 0.62, b = 0.27, a = 1.0 },
         ["color.hover"] = { r = 0.25, g = 0.35, b = 0.70, a = 1.0 },
+        ["color.active"] = { r = 0.20, g = 0.28, b = 0.52, a = 1.0 },
+        ["color.focus"] = { r = 0.22, g = 0.45, b = 0.30, a = 1.0 },
         ["color.selected"] = { r = 0.55, g = 0.35, b = 0.14, a = 1.0 },
+        ["color.disabled"] = { r = 0.33, g = 0.33, b = 0.35, a = 1.0 },
+        ["color.text_hover"] = { r = 1.0, g = 0.88, b = 0.32, a = 1.0 },
     }
     for path, value in pairs(token_defs) do
         local tok = AstApi.CapiDslAstCreateToken(b, path)
@@ -165,9 +198,21 @@ local function build_ast_program()
     AstApi.CapiDslAstStateAddOp(b, st_hover, "style", op(b, "bg", expr_token(b, "design.color.hover")))
     AstApi.CapiDslAstNodeAddState(b, root, st_hover)
 
+    local st_active = AstApi.CapiDslAstCreateStateOverlay(b, "active")
+    AstApi.CapiDslAstStateAddOp(b, st_active, "style", op(b, "bg", expr_token(b, "design.color.active")))
+    AstApi.CapiDslAstNodeAddState(b, root, st_active)
+
+    local st_focus = AstApi.CapiDslAstCreateStateOverlay(b, "focus")
+    AstApi.CapiDslAstStateAddOp(b, st_focus, "style", op(b, "bg", expr_token(b, "design.color.focus")))
+    AstApi.CapiDslAstNodeAddState(b, root, st_focus)
+
     local st_selected = AstApi.CapiDslAstCreateStateOverlay(b, "selected")
     AstApi.CapiDslAstStateAddOp(b, st_selected, "style", op(b, "bg", expr_token(b, "design.color.selected")))
     AstApi.CapiDslAstNodeAddState(b, root, st_selected)
+
+    local st_disabled = AstApi.CapiDslAstCreateStateOverlay(b, "disabled")
+    AstApi.CapiDslAstStateAddOp(b, st_disabled, "style", op(b, "bg", expr_token(b, "design.color.disabled")))
+    AstApi.CapiDslAstNodeAddState(b, root, st_disabled)
 
     local slot_host = AstApi.CapiDslAstCreateNodeElement(b)
     AstApi.CapiDslAstNodeSetPartName(b, slot_host, "slot_host")
@@ -196,6 +241,9 @@ local function build_ast_program()
     AstApi.CapiDslAstNodeSetTextExpr(b, fill_text, expr_str(b, "F"))
     AstApi.CapiDslAstNodeSetIdExpr(b, fill_text, expr_str(b, "fill_text"))
     AstApi.CapiDslAstNodeAddUseExpr(b, fill_text, recipe_call(b, "design.label"))
+    local fill_text_hover = AstApi.CapiDslAstCreateStateOverlay(b, "hover")
+    AstApi.CapiDslAstStateAddOp(b, fill_text_hover, "typography", op(b, "color", expr_token(b, "design.color.text_hover")))
+    AstApi.CapiDslAstNodeAddState(b, fill_text, fill_text_hover)
     AstApi.CapiDslAstFillAddChild(b, fill, fill_text)
     AstApi.CapiDslAstInvokeAddFill(b, invoke, fill)
 
@@ -203,6 +251,9 @@ local function build_ast_program()
     AstApi.CapiDslAstNodeSetTextExpr(b, body_text, expr_str(b, "B"))
     AstApi.CapiDslAstNodeSetIdExpr(b, body_text, expr_str(b, "body_text"))
     AstApi.CapiDslAstNodeAddUseExpr(b, body_text, recipe_call(b, "design.label"))
+    local body_text_hover = AstApi.CapiDslAstCreateStateOverlay(b, "hover")
+    AstApi.CapiDslAstStateAddOp(b, body_text_hover, "typography", op(b, "color", expr_token(b, "design.color.text_hover")))
+    AstApi.CapiDslAstNodeAddState(b, body_text, body_text_hover)
     AstApi.CapiDslAstInvokeAddBodyItem(b, invoke, body_text)
 
     AstApi.CapiDslAstProgramAddBodyItem(b, program, invoke)
@@ -347,7 +398,7 @@ terra compare_element_data_ids(a: &ui.Context, b: &ui.Context, label: &int8) : i
     return failed
 end
 
-terra run_frame_pair(pointer_inside: bool, selected: bool, label: &int8) : int32
+terra run_frame_pair(pointer_inside: bool, pointer_down: bool, focused: bool, selected: bool, disabled: bool, label: &int8) : int32
     var failed: int32 = 0
     var arena_a: ui.Arena
     var arena_b: ui.Arena
@@ -373,16 +424,20 @@ terra run_frame_pair(pointer_inside: bool, selected: bool, label: &int8) : int32
     var root_id = ui.GetElementIdFromChars("badge_root", 9)
 
     ui.SetCurrentContext(&ctx_a)
-    ui.SetPointerStateForContext(&ctx_a, curptr, false)
+    ui.SetPointerStateForContext(&ctx_a, curptr, pointer_down)
+    ui.SetElementFocusedForContext(&ctx_a, root_id, focused)
     ui.SetElementSelectedForContext(&ctx_a, root_id, selected)
+    ui.SetElementDisabledForContext(&ctx_a, root_id, disabled)
     if render_scene(&ctx_a, false, 240.0, 120.0) <= 0 then
         C.printf("FAIL: %s: DSL scene emitted no commands\n", label)
         failed = failed + 1
     end
 
     ui.SetCurrentContext(&ctx_b)
-    ui.SetPointerStateForContext(&ctx_b, curptr, false)
+    ui.SetPointerStateForContext(&ctx_b, curptr, pointer_down)
+    ui.SetElementFocusedForContext(&ctx_b, root_id, focused)
     ui.SetElementSelectedForContext(&ctx_b, root_id, selected)
+    ui.SetElementDisabledForContext(&ctx_b, root_id, disabled)
     if render_scene(&ctx_b, true, 240.0, 120.0) <= 0 then
         C.printf("FAIL: %s: AST scene emitted no commands\n", label)
         failed = failed + 1
@@ -400,9 +455,13 @@ end
 
 terra run_test() : int32
     var failed: int32 = 0
-    failed = failed + run_frame_pair(false, false, "base")
-    failed = failed + run_frame_pair(true, false, "hover")
-    failed = failed + run_frame_pair(false, true, "selected")
+    failed = failed + run_frame_pair(false, false, false, false, false, "base")
+    failed = failed + run_frame_pair(true, false, false, false, false, "hover")
+    failed = failed + run_frame_pair(true, true, false, false, false, "active")
+    failed = failed + run_frame_pair(false, false, true, false, false, "focus")
+    failed = failed + run_frame_pair(false, false, false, true, false, "selected")
+    failed = failed + run_frame_pair(true, false, false, true, false, "hover+selected")
+    failed = failed + run_frame_pair(true, true, false, false, true, "disabled precedence")
     if failed == 0 then
         C.printf("test_dsl_ast_parity: PASS\n")
     end
