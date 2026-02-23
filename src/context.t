@@ -1165,7 +1165,7 @@ terra ui.CloseElement()
     ui.CloseElementForContext(ui.GetCurrentContext())
 end
 
-terra ui.Context:openTextElement(text: config.String, textConfig: &config.TextConfig)
+terra ui.Context:openTextElementInternal(text: config.String, textConfig: &config.TextConfig, hasExplicitId: bool, explicitId: hash.ElementId)
     if self.layoutElements.length >= self.layoutElements.capacity - 1 or self.maxElementsExceeded then
         if not self.maxElementsExceeded then
             ui.ReportError(config.ERROR_TYPE_ELEMENTS_CAPACITY_EXCEEDED,
@@ -1179,7 +1179,11 @@ terra ui.Context:openTextElement(text: config.String, textConfig: &config.TextCo
     if parentElement == nil then return end
     
     var elem : layout.LayoutElement
-    elem.id = hash.HashNumber(parentElement.childrenOrTextContent.children.length + parentElement.floatingChildrenCount, parentElement.id).id
+    if hasExplicitId then
+        elem.id = explicitId.id
+    else
+        elem.id = hash.HashNumber(parentElement.childrenOrTextContent.children.length + parentElement.floatingChildrenCount, parentElement.id).id
+    end
     elem.dimensions.width = 0
     elem.dimensions.height = 0
     elem.minDimensions.width = 0
@@ -1211,6 +1215,9 @@ terra ui.Context:openTextElement(text: config.String, textConfig: &config.TextCo
     if added ~= nil then
         added.childrenOrTextContent.textElementData = textDataPtr
         self:registerElementId(added.id, idx)
+        if hasExplicitId then
+            self.layoutElementIdStrings:add(explicitId.stringId)
+        end
         var textMinWidth: float = 0
         
         if textConfig ~= nil then
@@ -1293,6 +1300,21 @@ terra ui.Context:openTextElement(text: config.String, textConfig: &config.TextCo
     parentElement.childrenOrTextContent.children.length = parentElement.childrenOrTextContent.children.length + 1
 end
 
+terra ui.Context:openTextElement(text: config.String, textConfig: &config.TextConfig)
+    var zeroId: hash.ElementId
+    zeroId.id = 0
+    zeroId.offset = 0
+    zeroId.baseId = 0
+    zeroId.stringId.isStaticallyAllocated = false
+    zeroId.stringId.length = 0
+    zeroId.stringId.chars = nil
+    self:openTextElementInternal(text, textConfig, false, zeroId)
+end
+
+terra ui.Context:openTextElementWithId(elementId: hash.ElementId, text: config.String, textConfig: &config.TextConfig)
+    self:openTextElementInternal(text, textConfig, true, elementId)
+end
+
 terra ui.OpenTextElementForContext(ctx: &ui.Context, text: config.String, textConfig: &config.TextConfig)
     if ctx ~= nil then
         ctx:openTextElement(text, textConfig)
@@ -1301,6 +1323,16 @@ end
 
 terra ui.OpenTextElement(text: config.String, textConfig: &config.TextConfig)
     ui.OpenTextElementForContext(ui.GetCurrentContext(), text, textConfig)
+end
+
+terra ui.OpenTextElementWithIdForContext(ctx: &ui.Context, elementId: hash.ElementId, text: config.String, textConfig: &config.TextConfig)
+    if ctx ~= nil then
+        ctx:openTextElementWithId(elementId, text, textConfig)
+    end
+end
+
+terra ui.OpenTextElementWithId(elementId: hash.ElementId, text: config.String, textConfig: &config.TextConfig)
+    ui.OpenTextElementWithIdForContext(ui.GetCurrentContext(), elementId, text, textConfig)
 end
 
 terra ui.StringFromChars(chars: &int8, length: int32) : config.String
@@ -1327,12 +1359,28 @@ terra ui.OpenElementWithIdChars(chars: &int8, length: int32)
     ui.OpenElementWithIdCharsForContext(ui.GetCurrentContext(), chars, length)
 end
 
+terra ui.OpenTextElementWithIdCharsForContext(ctx: &ui.Context, idChars: &int8, idLength: int32, textChars: &int8, textLength: int32, textConfig: &config.TextConfig)
+    ui.OpenTextElementWithIdForContext(ctx, ui.GetElementIdFromChars(idChars, idLength), ui.StringFromChars(textChars, textLength), textConfig)
+end
+
+terra ui.OpenTextElementWithIdChars(idChars: &int8, idLength: int32, textChars: &int8, textLength: int32, textConfig: &config.TextConfig)
+    ui.OpenTextElementWithIdCharsForContext(ui.GetCurrentContext(), idChars, idLength, textChars, textLength, textConfig)
+end
+
 terra ui.OpenTextElementWithLengthForContext(ctx: &ui.Context, chars: &int8, length: int32, textConfig: &config.TextConfig)
     ui.OpenTextElementForContext(ctx, ui.StringFromChars(chars, length), textConfig)
 end
 
 terra ui.OpenTextElementWithLength(chars: &int8, length: int32, textConfig: &config.TextConfig)
     ui.OpenTextElementWithLengthForContext(ui.GetCurrentContext(), chars, length, textConfig)
+end
+
+terra ui.OpenTextElementWithLengthAndIdForContext(ctx: &ui.Context, elementId: hash.ElementId, chars: &int8, length: int32, textConfig: &config.TextConfig)
+    ui.OpenTextElementWithIdForContext(ctx, elementId, ui.StringFromChars(chars, length), textConfig)
+end
+
+terra ui.OpenTextElementWithLengthAndId(elementId: hash.ElementId, chars: &int8, length: int32, textConfig: &config.TextConfig)
+    ui.OpenTextElementWithLengthAndIdForContext(ui.GetCurrentContext(), elementId, chars, length, textConfig)
 end
 
 terra ui.SetOpenElementLayoutConfigForContext(ctx: &ui.Context, cfg: config.LayoutConfig) : bool
@@ -1451,6 +1499,73 @@ end
 
 terra ui.AttachPaintConfig(cfg: config.PaintConfig) : bool
     return ui.AttachPaintConfigForContext(ui.GetCurrentContext(), cfg)
+end
+
+terra ui.ApplyOpenElementConfigsForContext(ctx: &ui.Context, bundle: &config.NodeBuildConfigBundle) : bool
+    if ctx == nil then return false end
+    if bundle == nil then return true end
+
+    var ok = true
+    if bundle.layoutConfig ~= nil then
+        if not ui.SetOpenElementLayoutConfigForContext(ctx, @bundle.layoutConfig) then ok = false end
+    end
+    if bundle.sharedConfig ~= nil then
+        if not ui.AttachSharedConfigForContext(ctx, @bundle.sharedConfig) then ok = false end
+    end
+    if bundle.borderConfig ~= nil then
+        if not ui.AttachBorderConfigForContext(ctx, @bundle.borderConfig) then ok = false end
+    end
+    if bundle.clipConfig ~= nil then
+        if not ui.AttachClipConfigForContext(ctx, @bundle.clipConfig) then ok = false end
+    end
+    if bundle.aspectRatioConfig ~= nil then
+        if not ui.AttachAspectRatioConfigForContext(ctx, @bundle.aspectRatioConfig) then ok = false end
+    end
+    if bundle.imageConfig ~= nil then
+        if not ui.AttachImageConfigForContext(ctx, @bundle.imageConfig) then ok = false end
+    end
+    if bundle.customConfig ~= nil then
+        if not ui.AttachCustomConfigForContext(ctx, @bundle.customConfig) then ok = false end
+    end
+    if bundle.floatingConfig ~= nil then
+        if not ui.AttachFloatingConfigForContext(ctx, @bundle.floatingConfig) then ok = false end
+    end
+    if bundle.paintConfig ~= nil then
+        if not ui.AttachPaintConfigForContext(ctx, @bundle.paintConfig) then ok = false end
+    end
+    return ok
+end
+
+terra ui.ApplyOpenElementConfigs(bundle: &config.NodeBuildConfigBundle) : bool
+    return ui.ApplyOpenElementConfigsForContext(ui.GetCurrentContext(), bundle)
+end
+
+terra ui.OpenElementWithConfigBundleForContext(ctx: &ui.Context, bundle: &config.NodeBuildConfigBundle) : bool
+    if ctx == nil then return false end
+    ui.OpenElementForContext(ctx)
+    return ui.ApplyOpenElementConfigsForContext(ctx, bundle)
+end
+
+terra ui.OpenElementWithConfigBundle(bundle: &config.NodeBuildConfigBundle) : bool
+    return ui.OpenElementWithConfigBundleForContext(ui.GetCurrentContext(), bundle)
+end
+
+terra ui.OpenElementWithIdAndConfigBundleForContext(ctx: &ui.Context, elementId: hash.ElementId, bundle: &config.NodeBuildConfigBundle) : bool
+    if ctx == nil then return false end
+    ui.OpenElementWithIdForContext(ctx, elementId)
+    return ui.ApplyOpenElementConfigsForContext(ctx, bundle)
+end
+
+terra ui.OpenElementWithIdAndConfigBundle(elementId: hash.ElementId, bundle: &config.NodeBuildConfigBundle) : bool
+    return ui.OpenElementWithIdAndConfigBundleForContext(ui.GetCurrentContext(), elementId, bundle)
+end
+
+terra ui.OpenElementWithIdCharsAndConfigBundleForContext(ctx: &ui.Context, chars: &int8, length: int32, bundle: &config.NodeBuildConfigBundle) : bool
+    return ui.OpenElementWithIdAndConfigBundleForContext(ctx, ui.GetElementIdFromChars(chars, length), bundle)
+end
+
+terra ui.OpenElementWithIdCharsAndConfigBundle(chars: &int8, length: int32, bundle: &config.NodeBuildConfigBundle) : bool
+    return ui.OpenElementWithIdCharsAndConfigBundleForContext(ui.GetCurrentContext(), chars, length, bundle)
 end
 
 terra ui.GetElementId(idString: config.String) : hash.ElementId

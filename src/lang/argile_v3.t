@@ -9,7 +9,7 @@
 
 local AST = require("src/lang/argile_v3_ast")
 local Span = require("src/lang/argile_span")
-local Lower = require("src/lang/argile_v3_lower")
+local BuilderV3 = require("src/builder_v3")
 local style = require("src/style/core")
 local ui = require("src.init")
 
@@ -1145,15 +1145,8 @@ local language = {
         lex:expect("argile")
         local body = parse_argile_body(lex)
         
-        -- Return builder that lowers V3 to V2 at compile time
         return function(environment_function)
-            local v2_nodes = Lower.LowerArgileBody(body, environment_function, v3_registry)
-            -- Return first node for single-node body
-            if #v2_nodes == 1 then
-                return v2_nodes[1]
-            else
-                return v2_nodes
-            end
+            return BuilderV3.compileV3Body(body, environment_function, v3_registry)
         end
     end,
     
@@ -1174,14 +1167,8 @@ local language = {
         elseif matches_word(lex, "argile") then
             lex:expect("argile")
             local body = parse_argile_body(lex)
-            -- Return constructor that lowers V3 to V2
             return function(environment_function)
-                local v2_nodes = Lower.LowerArgileBody(body, environment_function, v3_registry)
-                if #v2_nodes == 1 then
-                    return v2_nodes[1]
-                else
-                    return v2_nodes
-                end
+                return BuilderV3.compileV3Body(body, environment_function, v3_registry)
             end
         else
             lex:errorexpected("theme, component, or argile")
@@ -1206,12 +1193,7 @@ local language = {
             lex:expect("argile")
             local body = parse_argile_body(lex)
             return function(environment_function)
-                local v2_nodes = Lower.LowerArgileBody(body, environment_function, v3_registry)
-                if #v2_nodes == 1 then
-                    return v2_nodes[1]
-                else
-                    return v2_nodes
-                end
+                return BuilderV3.compileV3Body(body, environment_function, v3_registry)
             end
         else
             lex:errorexpected("theme, component, or argile")
@@ -1219,7 +1201,6 @@ local language = {
     end,
 }
 
--- Export registry for lowering module
 language.registry = v3_registry
 
 return language

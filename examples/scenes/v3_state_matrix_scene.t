@@ -2,7 +2,7 @@
 -- Tests hover, active, focus, selected, disabled state rendering
 -- Used by core correctness tests and backend smoke tests
 
-local ui = require("src.builder")
+local ui = require("src.init")
 local hash = require("src.hash")
 import "src/lang.argile_v3"
 
@@ -13,8 +13,8 @@ terra state_measure_text(text: &ui.StringSlice, textCfg: &ui.TextConfig, _userDa
     return 1  -- success
 end
 
--- State matrix scene with all runtime states
-state_matrix_scene = argile
+-- State matrix scene with all runtime states - returns Terra Quote directly
+local state_matrix_scene = argile
     el
         id("state_matrix_root")
         layout
@@ -165,8 +165,6 @@ state_matrix_scene = argile
     end
 end
 
-local compiled_scene = ui.compileResolved(state_matrix_scene)
-
 terra ArgileStateMatrixFrameForContext(ctx: &ui.Context, input: &ui.ArgileFrameInput) : int32
     ui.SetCurrentContext(ctx)
     ui.SetMeasureTextFunctionForContext(ctx, state_measure_text, nil)
@@ -178,7 +176,7 @@ terra ArgileStateMatrixFrameForContext(ctx: &ui.Context, input: &ui.ArgileFrameI
     ui.SetPointerStateForContext(ctx, p, input.pointer_down)
     
     ui.BeginLayoutForContext(ctx, input.width, input.height)
-    [compiled_scene]
+    [state_matrix_scene]
     return ui.FinalizeLayoutForContext(ctx)
 end
 

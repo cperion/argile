@@ -391,6 +391,20 @@ ui.ElementConfig = struct {
     config : ui.ElementConfigUnion
 }
 
+-- CAPI/Terra helper bundle mirroring the set of configs V3 can attach to a node.
+-- All fields are optional pointers; nil means "do not attach".
+ui.NodeBuildConfigBundle = struct {
+    layoutConfig : &ui.LayoutConfig,
+    sharedConfig : &ui.SharedConfig,
+    borderConfig : &ui.BorderConfig,
+    clipConfig : &ui.ClipConfig,
+    floatingConfig : &ui.FloatingConfig,
+    aspectRatioConfig : &ui.AspectRatioConfig,
+    imageConfig : &ui.ImageConfig,
+    customConfig : &ui.CustomConfig,
+    paintConfig : &ui.PaintConfig
+}
+
 -- ============================================
 -- PORTABILITY: Backend-Neutral Frame Input
 -- ============================================

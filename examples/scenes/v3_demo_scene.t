@@ -2,7 +2,7 @@
 -- Exports: ArgileDemoFrameForContext, ArgileDemoGetIds
 -- This scene is used by all backend demos (Love2D, raylib, SDL3)
 
-local ui = require("src.builder")
+local ui = require("src.init")
 local hash = require("src.hash")
 local config = require("src.config")
 import "src/lang.argile_v3"
@@ -170,8 +170,8 @@ component demo_card(props)
     end
 end
 
--- The main demo scene
-demo_scene = argile
+-- The main demo scene - returns a Terra Quote directly
+local demo_scene = argile
     el
         id("demo_root")
         use(demo_theme.screen())
@@ -203,8 +203,6 @@ demo_scene = argile
     end
 end
 
-local compiled_scene = ui.compileResolved(demo_scene)
-
 -- Portable scene export: Backend-neutral frame API
 -- All backends (Love2D, raylib, SDL3) call this function
 terra ArgileDemoFrameForContext(ctx: &ui.Context, input: &ui.ArgileFrameInput) : int32
@@ -223,8 +221,8 @@ terra ArgileDemoFrameForContext(ctx: &ui.Context, input: &ui.ArgileFrameInput) :
     -- Begin layout with input dimensions
     ui.BeginLayoutForContext(ctx, input.width, input.height)
     
-    -- Execute compiled scene
-    [compiled_scene]
+    -- Execute compiled scene (demo_scene is a Terra Quote)
+    [demo_scene]
     
     -- Finalize and return command count
     return ui.FinalizeLayoutForContext(ctx)

@@ -2,7 +2,7 @@
 -- Emits a deterministic command stream covering all render command types
 -- Used to verify backend adapters handle commands correctly
 
-local ui = require("src.builder")
+local ui = require("src.init")
 local hash = require("src.hash")
 import "src/lang.argile_v3"
 
@@ -14,8 +14,8 @@ terra conformance_measure_text(text: &ui.StringSlice, textCfg: &ui.TextConfig, _
     return 1  -- success
 end
 
--- Conformance scene with all command types
-conformance_scene = argile
+-- Conformance scene with all command types - returns Terra Quote directly
+local conformance_scene = argile
     el
         id("conformance_root")
         layout
@@ -101,8 +101,6 @@ conformance_scene = argile
     end
 end
 
-local compiled_scene = ui.compileResolved(conformance_scene)
-
 terra ArgileConformanceFrameForContext(ctx: &ui.Context, input: &ui.ArgileFrameInput) : int32
     ui.SetCurrentContext(ctx)
     ui.SetMeasureTextFunctionForContext(ctx, conformance_measure_text, nil)
@@ -114,7 +112,7 @@ terra ArgileConformanceFrameForContext(ctx: &ui.Context, input: &ui.ArgileFrameI
     ui.SetPointerStateForContext(ctx, p, input.pointer_down)
     
     ui.BeginLayoutForContext(ctx, input.width, input.height)
-    [compiled_scene]
+    [conformance_scene]
     return ui.FinalizeLayoutForContext(ctx)
 end
 

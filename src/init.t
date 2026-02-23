@@ -160,6 +160,7 @@ ui.PointerData = config.PointerData
 ui.ErrorData = config.ErrorData
 ui.ElementConfigUnion = config.ElementConfigUnion
 ui.ElementConfig = config.ElementConfig
+ui.NodeBuildConfigBundle = config.NodeBuildConfigBundle
 
 -- Portability: Backend-neutral frame input structs
 ui.ArgileFrameInput = config.ArgileFrameInput
@@ -194,8 +195,14 @@ ui.OpenStyledElement = context.OpenStyledElement
 ui.OpenStyledElementForContext = context.OpenStyledElementForContext
 ui.OpenTextElement = context.OpenTextElement
 ui.OpenTextElementForContext = context.OpenTextElementForContext
+ui.OpenTextElementWithId = context.OpenTextElementWithId
+ui.OpenTextElementWithIdForContext = context.OpenTextElementWithIdForContext
+ui.OpenTextElementWithIdChars = context.OpenTextElementWithIdChars
+ui.OpenTextElementWithIdCharsForContext = context.OpenTextElementWithIdCharsForContext
 ui.OpenTextElementWithLength = context.OpenTextElementWithLength
 ui.OpenTextElementWithLengthForContext = context.OpenTextElementWithLengthForContext
+ui.OpenTextElementWithLengthAndId = context.OpenTextElementWithLengthAndId
+ui.OpenTextElementWithLengthAndIdForContext = context.OpenTextElementWithLengthAndIdForContext
 ui.StringFromChars = context.StringFromChars
 ui.GetElementId = context.GetElementId
 ui.GetElementIdWithIndex = context.GetElementIdWithIndex
@@ -205,6 +212,14 @@ ui.OpenElementWithIdChars = context.OpenElementWithIdChars
 ui.OpenElementWithIdCharsForContext = context.OpenElementWithIdCharsForContext
 ui.SetOpenElementLayoutConfig = context.SetOpenElementLayoutConfig
 ui.SetOpenElementLayoutConfigForContext = context.SetOpenElementLayoutConfigForContext
+ui.ApplyOpenElementConfigs = context.ApplyOpenElementConfigs
+ui.ApplyOpenElementConfigsForContext = context.ApplyOpenElementConfigsForContext
+ui.OpenElementWithConfigBundle = context.OpenElementWithConfigBundle
+ui.OpenElementWithConfigBundleForContext = context.OpenElementWithConfigBundleForContext
+ui.OpenElementWithIdAndConfigBundle = context.OpenElementWithIdAndConfigBundle
+ui.OpenElementWithIdAndConfigBundleForContext = context.OpenElementWithIdAndConfigBundleForContext
+ui.OpenElementWithIdCharsAndConfigBundle = context.OpenElementWithIdCharsAndConfigBundle
+ui.OpenElementWithIdCharsAndConfigBundleForContext = context.OpenElementWithIdCharsAndConfigBundleForContext
 ui.AttachSharedConfig = context.AttachSharedConfig
 ui.AttachSharedConfigForContext = context.AttachSharedConfigForContext
 ui.AttachBorderConfig = context.AttachBorderConfig
@@ -290,120 +305,6 @@ ui.MAXFLOAT = context.MAXFLOAT
 --   5. Input/State
 --   6. Render Output
 --   7. Hashing/Id
-ui.capi = {
-    -- Context/Init
-    GetApiVersion = ui.GetApiVersion,
-    GetContextSize = ui.GetContextSize,
-    CreateArenaWithCapacityAndMemory = ui.CreateArenaWithCapacityAndMemory,
-    Initialize = ui.Initialize,
-    InitializeContext = ui.InitializeContext,
-    GetCurrentContext = ui.GetCurrentContext,
-    SetCurrentContext = ui.SetCurrentContext,
-    SetMeasureTextFunction = ui.SetMeasureTextFunction,
-    SetMeasureTextFunctionForContext = ui.SetMeasureTextFunctionForContext,
-    SetErrorHandler = ui.SetErrorHandler,
-    SetQueryScrollOffsetFunction = ui.SetQueryScrollOffsetFunction,
-    SetLayoutDimensions = ui.SetLayoutDimensions,
-    SetLayoutDimensionsForContext = ui.SetLayoutDimensionsForContext,
-    GetMaxElementCount = ui.GetMaxElementCount,
-    SetMaxElementCount = ui.SetMaxElementCount,
-    MinMemorySize = ui.MinMemorySize,
-    GetMaxMeasureTextCacheWordCount = ui.GetMaxMeasureTextCacheWordCount,
-    SetMaxMeasureTextCacheWordCount = ui.SetMaxMeasureTextCacheWordCount,
-    ResetMeasureTextCache = ui.ResetMeasureTextCache,
-    ResetMeasureTextCacheForContext = ui.ResetMeasureTextCacheForContext,
-    SetDisableCulling = ui.SetDisableCulling,
-    SetCullingEnabled = ui.SetCullingEnabled,
-    SetDebugModeEnabled = ui.SetDebugModeEnabled,
-    IsDebugModeEnabled = ui.IsDebugModeEnabled,
-    SetExternalScrollHandlingEnabled = ui.SetExternalScrollHandlingEnabled,
-
-    -- Layout/Frame
-    BeginLayout = ui.BeginLayout,
-    BeginLayoutForContext = ui.BeginLayoutForContext,
-    FinalizeLayout = ui.FinalizeLayout,
-    FinalizeLayoutForContext = ui.FinalizeLayoutForContext,
-    UpdateScrollContainers = ui.UpdateScrollContainers,
-    UpdateScrollContainersForContext = ui.UpdateScrollContainersForContext,
-    GetScrollOffset = ui.GetScrollOffset,
-    GetScrollContainerData = ui.GetScrollContainerData,
-
-    -- Element Construction
-    OpenElement = ui.OpenElement,
-    OpenElementForContext = ui.OpenElementForContext,
-    OpenElementWithId = ui.OpenElementWithId,
-    OpenElementWithIdForContext = ui.OpenElementWithIdForContext,
-    OpenElementWithIdChars = ui.OpenElementWithIdChars,
-    OpenElementWithIdCharsForContext = ui.OpenElementWithIdCharsForContext,
-    OpenStyledElement = ui.OpenStyledElement,
-    OpenStyledElementForContext = ui.OpenStyledElementForContext,
-    ConfigureOpenElementBox = ui.ConfigureOpenElementBox,
-    ConfigureOpenElementBoxForContext = ui.ConfigureOpenElementBoxForContext,
-    SetOpenElementLayoutConfig = ui.SetOpenElementLayoutConfig,
-    SetOpenElementLayoutConfigForContext = ui.SetOpenElementLayoutConfigForContext,
-    AttachSharedConfig = ui.AttachSharedConfig,
-    AttachSharedConfigForContext = ui.AttachSharedConfigForContext,
-    AttachBorderConfig = ui.AttachBorderConfig,
-    AttachBorderConfigForContext = ui.AttachBorderConfigForContext,
-    AttachClipConfig = ui.AttachClipConfig,
-    AttachClipConfigForContext = ui.AttachClipConfigForContext,
-    AttachFloatingConfig = ui.AttachFloatingConfig,
-    AttachFloatingConfigForContext = ui.AttachFloatingConfigForContext,
-    AttachAspectRatioConfig = ui.AttachAspectRatioConfig,
-    AttachAspectRatioConfigForContext = ui.AttachAspectRatioConfigForContext,
-    AttachImageConfig = ui.AttachImageConfig,
-    AttachImageConfigForContext = ui.AttachImageConfigForContext,
-    AttachCustomConfig = ui.AttachCustomConfig,
-    AttachCustomConfigForContext = ui.AttachCustomConfigForContext,
-    AttachPaintConfig = ui.AttachPaintConfig,
-    AttachPaintConfigForContext = ui.AttachPaintConfigForContext,
-    CloseElement = ui.CloseElement,
-    CloseElementForContext = ui.CloseElementForContext,
-    GetElementData = ui.GetElementData,
-
-    -- Text
-    OpenTextElement = ui.OpenTextElement,
-    OpenTextElementForContext = ui.OpenTextElementForContext,
-    OpenTextElementWithLength = ui.OpenTextElementWithLength,
-    OpenTextElementWithLengthForContext = ui.OpenTextElementWithLengthForContext,
-    StringFromChars = ui.StringFromChars,
-
-    -- Input/State
-    SetPointerState = ui.SetPointerState,
-    SetPointerStateForContext = ui.SetPointerStateForContext,
-    Hovered = ui.Hovered,
-    PointerOver = ui.PointerOver,
-    PointerDown = ui.PointerDown,
-    ElementActive = ui.ElementActive,
-    ElementFocused = ui.ElementFocused,
-    ElementSelected = ui.ElementSelected,
-    ElementDisabled = ui.ElementDisabled,
-    SetElementFocused = ui.SetElementFocused,
-    SetElementFocusedForContext = ui.SetElementFocusedForContext,
-    SetElementSelected = ui.SetElementSelected,
-    SetElementSelectedForContext = ui.SetElementSelectedForContext,
-    SetElementDisabled = ui.SetElementDisabled,
-    SetElementDisabledForContext = ui.SetElementDisabledForContext,
-    OnHoverCurrent = ui.OnHoverCurrent,
-    OnHover = ui.OnHover,
-
-    -- Render Output
-    GetRenderCommandCount = ui.GetRenderCommandCount,
-    GetRenderCommandCountForContext = ui.GetRenderCommandCountForContext,
-    GetRenderCommandBuffer = ui.GetRenderCommandBuffer,
-    GetRenderCommandBufferForContext = ui.GetRenderCommandBufferForContext,
-    GetRenderCommandAt = ui.GetRenderCommandAt,
-    GetRenderCommandAtForContext = ui.GetRenderCommandAtForContext,
-
-    -- Hashing/Id
-    GetElementId = ui.GetElementId,
-    GetElementIdWithIndex = ui.GetElementIdWithIndex,
-    GetElementIdFromChars = ui.GetElementIdFromChars,
-    GetElementIdWithIndexFromChars = ui.GetElementIdWithIndexFromChars,
-    HashData = ui.HashData,
-    HashNumber = ui.HashNumber,
-    HashString = ui.HashString,
-    HashStringWithOffset = ui.HashStringWithOffset,
-}
+ui.capi = require("src.capi").build(ui)
 
 return ui
