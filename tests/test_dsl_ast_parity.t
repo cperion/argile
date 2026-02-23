@@ -313,53 +313,35 @@ terra compare_context_commands(a: &ui.Context, b: &ui.Context, label: &int8) : i
     return 0
 end
 
-terra find_cmd_for_id(ctx: &ui.Context, id: ui.ElementId, kind: ui.RenderCommandType, out_cmd: &ui.RenderCommand) : bool
-    var i: int32 = 0
-    while i < ctx.renderCommands.length do
-        var cmd = ui.GetRenderCommandAtForContext(ctx, i)
-        if cmd.commandType == kind and cmd.id == id.id then
-            @out_cmd = cmd
-            return true
-        end
-        i = i + 1
-    end
-    return false
-end
-
-terra compare_explicit_ids(a: &ui.Context, b: &ui.Context, label: &int8) : int32
+terra compare_element_data_ids(a: &ui.Context, b: &ui.Context, label: &int8) : int32
     var failed: int32 = 0
     var root_id = ui.GetElementIdFromChars("badge_root", 9)
     var fill_id = ui.GetElementIdFromChars("fill_text", 8)
     var body_id = ui.GetElementIdFromChars("body_text", 8)
+    var i: int32 = 0
+    while i < 3 do
+        var id = root_id
+        var name: &int8 = "badge_root"
+        if i == 1 then
+            id = fill_id
+            name = "fill_text"
+        elseif i == 2 then
+            id = body_id
+            name = "body_text"
+        end
 
-    var aroot: ui.RenderCommand
-    var broot: ui.RenderCommand
-    if not find_cmd_for_id(a, root_id, ui.RENDER_RECTANGLE, &aroot) or not find_cmd_for_id(b, root_id, ui.RENDER_RECTANGLE, &broot) then
-        C.printf("FAIL: %s: missing root rectangle in one context\n", label)
-        failed = failed + 1
-    elseif not command_equal(aroot, broot) then
-        C.printf("FAIL: %s: root rectangle mismatch\n", label)
-        failed = failed + 1
-    end
-
-    var afill: ui.RenderCommand
-    var bfill: ui.RenderCommand
-    if not find_cmd_for_id(a, fill_id, ui.RENDER_TEXT, &afill) or not find_cmd_for_id(b, fill_id, ui.RENDER_TEXT, &bfill) then
-        C.printf("FAIL: %s: missing fill_text command\n", label)
-        failed = failed + 1
-    elseif not command_equal(afill, bfill) then
-        C.printf("FAIL: %s: fill_text command mismatch\n", label)
-        failed = failed + 1
-    end
-
-    var abody: ui.RenderCommand
-    var bbody: ui.RenderCommand
-    if not find_cmd_for_id(a, body_id, ui.RENDER_TEXT, &abody) or not find_cmd_for_id(b, body_id, ui.RENDER_TEXT, &bbody) then
-        C.printf("FAIL: %s: missing body_text command\n", label)
-        failed = failed + 1
-    elseif not command_equal(abody, bbody) then
-        C.printf("FAIL: %s: body_text command mismatch\n", label)
-        failed = failed + 1
+        ui.SetCurrentContext(a)
+        var da = ui.GetElementData(id)
+        ui.SetCurrentContext(b)
+        var db = ui.GetElementData(id)
+        if da.found ~= db.found then
+            C.printf("FAIL: %s: element data presence mismatch for %s (dsl=%d ast=%d)\n", label, name, da.found, db.found)
+            failed = failed + 1
+        elseif da.found and not bbox_equal(da.boundingBox, db.boundingBox) then
+            C.printf("FAIL: %s: element data bbox mismatch for %s\n", label, name)
+            failed = failed + 1
+        end
+        i = i + 1
     end
 
     return failed
@@ -408,6 +390,7 @@ terra run_frame_pair(pointer_inside: bool, selected: bool, label: &int8) : int32
 
     if failed == 0 then
         failed = failed + compare_context_commands(&ctx_a, &ctx_b, label)
+        failed = failed + compare_element_data_ids(&ctx_a, &ctx_b, label)
     end
 
     free_ctx(&arena_a)

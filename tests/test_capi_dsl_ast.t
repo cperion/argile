@@ -6,6 +6,19 @@ local C = terralib.includecstring [[
 local ui = require("src.init")
 local AstCapi = require("src/capi_dsl_host")
 
+do
+    local flags = AstCapi.CapiDslAstGetFeatureFlags()
+    if type(flags) ~= "number" or flags <= 0 then
+        error("expected host AST API feature flags")
+    end
+    if not AstCapi.CapiDslAstHasFeature(AstCapi.CAPI_DSL_AST_FEATURE_CORE) then
+        error("expected CORE feature flag")
+    end
+    if not AstCapi.CapiDslAstHasFeature(AstCapi.CAPI_DSL_AST_FEATURE_COMPILE) then
+        error("expected COMPILE feature flag")
+    end
+end
+
 local function expr_lit(b, v)
     return AstCapi.CapiDslAstCreateExprLiteral(b, v)
 end
