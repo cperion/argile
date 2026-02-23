@@ -10,10 +10,11 @@
   - canonical AST module and compiler seam (`src/lang/ast.t`, `compileAstProgram*`)
   - parser/AST/compiler refactors to reduce parser-closure leakage (structured AST expressions for token/path/call cases)
   - host-side handle-based AST builder (`src/capi_dsl_ast.t`)
-  - host-side compile entrypoints split into `src/capi_dsl_compile.t`
-  - host API aggregator (`src/capi_dsl_host.t`) exposed via `ui.GetDslAstApi()`
-  - host-side compile diagnostics helpers (`TryCompile*`, last compile error)
-  - source metadata/span attachment APIs on AST objects
+- host-side compile entrypoints split into `src/capi_dsl_compile.t`
+- host API aggregator (`src/capi_dsl_host.t`) exposed via `ui.GetDslAstApi()`
+- host-side compile diagnostics helpers (`TryCompile*`, last compile error)
+- host-side builder diagnostics helpers (`TryCall`, last builder error)
+- source metadata/span attachment APIs on AST objects
   - parser-vs-host-AST conformance test (`tests/test_dsl_ast_parity.t`)
   - bindings-author guide + reference wrapper example
 - Not yet implemented:
@@ -271,6 +272,74 @@ Required for full C API parity (canonical AST expansion if not present yet):
 - recipe call expressions
 - possibly field/path reference expressions
 - optional unary/binary expressions if DSL semantics require them
+
+## Canonical AST Schema Audit (Current Implementation)
+
+This section records the current canonical AST schema status against the C API portability boundary. It is intentionally explicit so bindings authors and compiler work do not rely on implicit parser behavior.
+
+### Portable AST Constructs (Currently Implemented and CAPI-Buildable)
+
+Top-level / declarations:
+
+- `Program`
+- `ThemeDecl`
+- `TokenDecl`
+- `RecipeDecl`
+- `ComponentDecl`
+- `VariantDecl`
+
+Body / node constructs:
+
+- `NodeDecl` (`el`, `text`)
+- `StateOverlay`
+- `ComponentInvoke`
+- `FillDecl`
+
+Expression/value constructs:
+
+- `LiteralExpr`
+- `Symbol`
+- `TokenRefExpr`
+- `PathRefExpr`
+- `CallExpr`
+
+Notes:
+
+- `LiteralExpr` currently carries Lua values directly (including Lua tables used as structured literals like color tables). This is acceptable for the current host-side AST API and canonical compiler path.
+- Generic operation arguments (`layout`, `style`, `typography`, `paint`) are represented as `{ name, args = { <expr>... } }` op tables attached to AST objects and are CAPI-buildable through `CapiDslAstCreateOp` + `CapiDslAstOpAddArgExpr`.
+
+### Host-Side / Terra-Lua-Only AST Constructs (Deliberately Non-Portable)
+
+- `LuaExpr`
+  - wraps a host function used to evaluate values at compile time
+  - parser and host-side tools may produce this
+  - not representable in plain C ABI without embedding a host callback model
+- `Splice`
+  - body-level escape hatch that injects prebuilt nodes/quotes from Lua/Terra code
+  - parser/native-Terra extension only
+
+These constructs are accepted by the canonical compiler, but are outside portable C API parity.
+
+### Parser-Specific Behavior (Normalized into Canonical AST)
+
+The parser (`src/lang/argile.t`) may still emit `LuaExpr` for general value expressions when no structured DSL AST form is recognized (for example arbitrary `luaexpr` forms).
+
+Structured parser output already uses explicit AST expressions for several important cases:
+
+- `token(...)` -> `TokenRefExpr`
+- structured `use(...)` path/call forms -> `PathRefExpr` / `CallExpr`
+- bare symbolic invoke args -> `Symbol`
+
+This means the canonical AST contract is already shared, but parser coverage of explicit portable expression forms is not yet complete for all general value positions.
+
+### Canonical Compiler Contract (Current)
+
+The canonical compiler (`src/dsl_compiler.t`) accepts:
+
+- parser-produced AST using the canonical node/declaration schema
+- host-side AST-builder-produced AST (`CapiDslAst*`) through `compileAstProgram*`
+
+The compiler still supports a transition period for some legacy callable value forms in `AST.EvalExpr(...)`, but the canonical target contract is AST-expression-based.
 
 ## AST C ABI Suitability Requirements
 

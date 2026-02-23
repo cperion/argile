@@ -377,3 +377,37 @@ do
         error("expected slot/children conflict validation")
     end
 end
+
+do
+    local b = AstCapi.CapiDslAstCreateBuilder()
+    local n = AstCapi.CapiDslAstCreateNodeElement(b)
+    local ok, _, err = AstCapi.CapiDslAstTryCall(b, "CapiDslAstNodeSetSlotName", b, n, "content")
+    if not ok then
+        error("expected first slot set via TryCall to succeed: " .. tostring(err))
+    end
+    local ok_dup, _, err_dup = AstCapi.CapiDslAstTryCall(b, "CapiDslAstNodeSetSlotName", b, n, "other")
+    if ok_dup then
+        error("expected duplicate slot via TryCall to fail")
+    end
+    if type(err_dup) ~= "string" or not err_dup:find("duplicate slot declaration", 1, true) then
+        error("expected duplicate slot error from TryCall")
+    end
+    local diag = AstCapi.CapiDslAstGetLastBuilderError(b)
+    if type(diag) ~= "table" then
+        error("expected builder diagnostic table")
+    end
+    if diag.code ~= AstCapi.CAPI_DSL_AST_BUILDER_ERR_CALL then
+        error("expected builder diagnostic code")
+    end
+    if diag.api ~= "CapiDslAstNodeSetSlotName" then
+        error("expected builder diagnostic api name")
+    end
+    if type(diag.message) ~= "string" or not diag.message:find("duplicate slot declaration", 1, true) then
+        error("expected builder diagnostic message")
+    end
+    AstCapi.CapiDslAstClearLastBuilderError(b)
+    local cleared = AstCapi.CapiDslAstGetLastBuilderError(b)
+    if cleared.code ~= AstCapi.CAPI_DSL_AST_BUILDER_ERR_NONE then
+        error("expected cleared builder diagnostic")
+    end
+end

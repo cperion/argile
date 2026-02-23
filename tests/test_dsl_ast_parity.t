@@ -123,6 +123,10 @@ local compiled_dsl_scene = argile
             end
         end
     end
+
+    Badge(id = "from_arg_fallback", tone = primary)
+        id("badge_root_fallback")
+    end
 end
 
 local function expr_lit(b, v) return AstApi.CapiDslAstCreateExprLiteral(b, v) end
@@ -258,6 +262,12 @@ local function build_ast_program()
 
     AstApi.CapiDslAstProgramAddBodyItem(b, program, invoke)
 
+    local invoke_fallback = AstApi.CapiDslAstCreateInvoke(b, "Badge")
+    AstApi.CapiDslAstInvokeSetArgExpr(b, invoke_fallback, "id", expr_str(b, "from_arg_fallback"))
+    AstApi.CapiDslAstInvokeSetArgExpr(b, invoke_fallback, "tone", expr_symbol(b, "primary"))
+    AstApi.CapiDslAstInvokeSetIdExpr(b, invoke_fallback, expr_str(b, "badge_root_fallback"))
+    AstApi.CapiDslAstProgramAddBodyItem(b, program, invoke_fallback)
+
     return b, program
 end
 
@@ -367,16 +377,20 @@ end
 terra compare_element_data_ids(a: &ui.Context, b: &ui.Context, label: &int8) : int32
     var failed: int32 = 0
     var root_id = ui.GetElementIdFromChars("badge_root", 9)
+    var root_fallback_id = ui.GetElementIdFromChars("badge_root_fallback", 18)
     var fill_id = ui.GetElementIdFromChars("fill_text", 8)
     var body_id = ui.GetElementIdFromChars("body_text", 8)
     var i: int32 = 0
-    while i < 3 do
+    while i < 4 do
         var id = root_id
         var name: &int8 = "badge_root"
         if i == 1 then
+            id = root_fallback_id
+            name = "badge_root_fallback"
+        elseif i == 2 then
             id = fill_id
             name = "fill_text"
-        elseif i == 2 then
+        elseif i == 3 then
             id = body_id
             name = "body_text"
         end

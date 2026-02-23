@@ -336,6 +336,15 @@ Compile diagnostics helpers:
 - `CapiDslAstGetLastCompileError(builder)` -> `{ code = <number>, message = <string> }`
 - `CapiDslAstClearLastCompileError(builder)`
 
+Builder diagnostics helpers:
+
+- `CapiDslAstTryCall(builder, apiName, ...)`
+- `CapiDslAstGetLastBuilderError(builder)` -> `{ code, message, api }`
+- `CapiDslAstClearLastBuilderError(builder)`
+- builder error code constants:
+  - `CAPI_DSL_AST_BUILDER_ERR_NONE`
+  - `CAPI_DSL_AST_BUILDER_ERR_CALL`
+
 ## Error Model (Current Host API)
 
 ### Builder/Mutation Errors
@@ -349,6 +358,8 @@ Most AST construction/mutation functions currently raise Lua errors immediately 
 - invalid block kind
 
 This is intentional for host-side API simplicity, and is suitable for wrappers that use `pcall`.
+
+If you want structured builder diagnostics, use `CapiDslAstTryCall(...)` instead of direct calls.
 
 ### Compile Errors
 
