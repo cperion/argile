@@ -185,9 +185,9 @@ end
 -- Example scene exports from examples/scenes/
 -- These are backend-neutral scene functions used by Love2D, raylib, and SDL3 demos
 local scene_modules = {
-    "examples/scenes/v3_demo_scene",
-    "examples/scenes/v3_conformance_scene",
-    "examples/scenes/v3_state_matrix_scene",
+    "examples/scenes/dsl_demo_scene",
+    "examples/scenes/dsl_conformance_scene",
+    "examples/scenes/dsl_state_matrix_scene",
 }
 
 for _, module_path in ipairs(scene_modules) do

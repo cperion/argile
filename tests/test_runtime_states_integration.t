@@ -4,7 +4,7 @@ local C = terralib.includecstring [[
 #include <string.h>
 ]]
 
-local ui = require("src.builder")
+local ui = require("src.init")
 import "src/lang.argile"
 
 -- New FFI-friendly signature: out pointer + int32 return
@@ -18,51 +18,53 @@ terra state_test_measure_text(text: &ui.StringSlice, textCfg: &ui.TextConfig, _u
     return 1  -- success
 end
 
-local compiled_state_scene = argile el
-    id("state_probe")
-    layout
-        width_fixed(120.0)
-        height_fixed(40.0)
-        padding(4)
-    end
-    style
-        bg({ r = 0.10, g = 0.10, b = 0.10, a = 1.0 })
-    end
-    when hover
+local compiled_state_scene = argile
+    el
+        id("state_probe")
+        layout
+            width_fixed(120.0)
+            height_fixed(40.0)
+            padding(4)
+        end
         style
-            bg({ r = 0.20, g = 0.40, b = 0.90, a = 1.0 })
+            bg({ r = 0.10, g = 0.10, b = 0.10, a = 1.0 })
         end
-    end
-    when active
-        style
-            bg({ r = 0.15, g = 0.30, b = 0.70, a = 1.0 })
+        state hover
+            style
+                bg({ r = 0.20, g = 0.40, b = 0.90, a = 1.0 })
+            end
         end
-    end
-    when focus
-        style
-            bg({ r = 0.20, g = 0.60, b = 0.30, a = 1.0 })
+        state active
+            style
+                bg({ r = 0.15, g = 0.30, b = 0.70, a = 1.0 })
+            end
         end
-    end
-    when selected
-        style
-            bg({ r = 0.60, g = 0.40, b = 0.10, a = 1.0 })
+        state focus
+            style
+                bg({ r = 0.20, g = 0.60, b = 0.30, a = 1.0 })
+            end
         end
-    end
-    when disabled
-        style
-            bg({ r = 0.35, g = 0.35, b = 0.35, a = 1.0 })
+        state selected
+            style
+                bg({ r = 0.60, g = 0.40, b = 0.10, a = 1.0 })
+            end
         end
-    end
-    text("S")
-        id("state_probe_label")
-        typography
-            color({ r = 1.0, g = 1.0, b = 1.0, a = 1.0 })
-            font_size(12)
-            line_height(12)
+        state disabled
+            style
+                bg({ r = 0.35, g = 0.35, b = 0.35, a = 1.0 })
+            end
         end
-        when hover
+        text("S")
+            id("state_probe_label")
             typography
-                color({ r = 1.0, g = 0.85, b = 0.20, a = 1.0 })
+                color({ r = 1.0, g = 1.0, b = 1.0, a = 1.0 })
+                font_size(12)
+                line_height(12)
+            end
+            state hover
+                typography
+                    color({ r = 1.0, g = 0.85, b = 0.20, a = 1.0 })
+                end
             end
         end
     end

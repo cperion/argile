@@ -1,11 +1,11 @@
--- Backend-neutral V3 demo scene for Argile
+-- Backend-neutral DSL demo scene for Argile
 -- Exports: ArgileDemoFrameForContext, ArgileDemoGetIds
 -- This scene is used by all backend demos (Love2D, raylib, SDL3)
 
 local ui = require("src.init")
 local hash = require("src.hash")
 local config = require("src.config")
-import "src/lang.argile_v3"
+import "src/lang.argile"
 
 -- Demo-scene specific text measurement (8px per char fallback)
 -- New FFI-friendly signature: out pointer + int32 return
@@ -132,7 +132,7 @@ component demo_card(props)
                 height_fit()
             end
             slot(header)
-                text("Argile V3 Multi-Backend Demo")
+                text("Argile DSL Multi-Backend Demo")
                     id("demo_title")
                     use(demo_theme.title())
                     state hover
@@ -178,7 +178,7 @@ local demo_scene = argile
 
         demo_card(id = "demo_card")
             fill(header)
-                text("Argile V3 Demo")
+                text("Argile DSL Demo")
                     id("demo_card_title")
                     use(demo_theme.title())
                     state hover

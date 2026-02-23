@@ -1,5 +1,5 @@
 --[[
-    Source Span Utilities for V3
+    Source Span Utilities for DSL
     
     Provides position tracking for AST nodes and formatted error messages.
 ]]

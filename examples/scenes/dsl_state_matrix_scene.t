@@ -4,7 +4,7 @@
 
 local ui = require("src.init")
 local hash = require("src.hash")
-import "src/lang.argile_v3"
+import "src/lang.argile"
 
 -- New FFI-friendly signature: out pointer + int32 return
 terra state_measure_text(text: &ui.StringSlice, textCfg: &ui.TextConfig, _userData: &opaque, out: &ui.Dimensions) : int32

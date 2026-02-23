@@ -1,7 +1,7 @@
 --[[
-    Argile V3 Builder - Direct V3 AST to Terra Quotes
+    Argile DSL Compiler - Direct DSL AST to Terra Quotes
     
-    Compiles V3 AST (component invocations, slots, fills) directly into
+    Compiles DSL AST (component invocations, slots, fills) directly into
     Terra Quotes, eliminating the V2 intermediate representation.
     
     Key design:
@@ -13,7 +13,7 @@
 
 local ui = require("src.init")
 local style = require("src/style/core")
-local AST = require("src/lang/argile_v3_ast")
+local AST = require("src/lang/argile_ast")
 local Span = require("src/lang/argile_span")
 
 local M = {}
@@ -793,7 +793,7 @@ local function merge_state_overlay(base_node, state_overlay, env_fn)
     return merged
 end
 
-local function validate_runtime_states(node, v3_node)
+local function validate_runtime_states(node, dsl_node)
     if not node.states then return end
     
     local has_any_state = false
@@ -809,7 +809,7 @@ local function validate_runtime_states(node, v3_node)
         end
     end
     
-    local has_id = v3_node and v3_node.id_expr
+    local has_id = dsl_node and dsl_node.id_expr
     if not has_id then
         error("argile: state requires element to have an id")
     end
@@ -897,17 +897,17 @@ local function emit_state_mask_dispatch(mask_var, combo_count, branch_builder)
     return quote [stmts] end
 end
 
-local compile_v3_node
-local compile_v3_invoke
+local compile_dsl_node
+local compile_dsl_invoke
 
 local function compile_children(child_nodes, env_fn, registry, fills_by_slot, inherited_text_cfg)
     local child_stmts = terralib.newlist()
     
     for _, child in ipairs(child_nodes or {}) do
         if AST.IsKind(child, "NodeDecl") then
-            child_stmts:insert(compile_v3_node(child, env_fn, registry, fills_by_slot, inherited_text_cfg))
+            child_stmts:insert(compile_dsl_node(child, env_fn, registry, fills_by_slot, inherited_text_cfg))
         elseif AST.IsKind(child, "ComponentInvoke") then
-            child_stmts:insert(compile_v3_invoke(child, env_fn, registry, fills_by_slot, inherited_text_cfg))
+            child_stmts:insert(compile_dsl_invoke(child, env_fn, registry, fills_by_slot, inherited_text_cfg))
         elseif AST.IsKind(child, "Splice") then
             local spliced = child.expr_fn(env_fn)
             if spliced ~= nil then
@@ -927,8 +927,8 @@ local function compile_children(child_nodes, env_fn, registry, fills_by_slot, in
     return child_stmts
 end
 
-local function is_text_node(v3_node)
-    return v3_node._kind == "NodeDecl" and v3_node.kind == "text"
+local function is_text_node(dsl_node)
+    return dsl_node._kind == "NodeDecl" and dsl_node.kind == "text"
 end
 
 local function node_has_any_states(states)
@@ -942,9 +942,9 @@ end
 -- `text(...)` is normally emitted as a leaf fast-path. If it has an id or any
 -- non-typography body config/state, emit it as a regular element wrapper with a
 -- text child so IDs/layout/style/state target the text node itself.
-local function text_node_needs_wrapper(v3_node, resolved)
-    if not is_text_node(v3_node) then return false end
-    if v3_node.id_expr ~= nil then return true end
+local function text_node_needs_wrapper(dsl_node, resolved)
+    if not is_text_node(dsl_node) then return false end
+    if dsl_node.id_expr ~= nil then return true end
     if resolved.layout ~= nil then return true end
     if resolved.shared ~= nil then return true end
     if resolved.border ~= nil then return true end
@@ -955,8 +955,8 @@ local function text_node_needs_wrapper(v3_node, resolved)
     if resolved.floating ~= nil then return true end
     if resolved.paint ~= nil and #resolved.paint > 0 then return true end
     if node_has_any_states(resolved.states) then return true end
-    if v3_node.slot_name ~= nil or v3_node.has_children_marker then return true end
-    if v3_node.children ~= nil and #v3_node.children > 0 then return true end
+    if dsl_node.slot_name ~= nil or dsl_node.has_children_marker then return true end
+    if dsl_node.children ~= nil and #dsl_node.children > 0 then return true end
     return false
 end
 
@@ -1063,17 +1063,17 @@ local function apply_layout_ops(base_layout, ops, env_fn)
     return layout
 end
 
-compile_v3_node = function(v3_node, env_fn, registry, fills_by_slot, inherited_text_cfg)
-    local resolved = resolve_node_ops(v3_node, env_fn, registry)
-    validate_runtime_states(resolved, v3_node)
+compile_dsl_node = function(dsl_node, env_fn, registry, fills_by_slot, inherited_text_cfg)
+    local resolved = resolve_node_ops(dsl_node, env_fn, registry)
+    validate_runtime_states(resolved, dsl_node)
     if inherited_text_cfg ~= nil then
         resolved.textConfig = merge_into(inherited_text_cfg, resolved.textConfig)
     end
     
     local stmts = terralib.newlist()
     
-    local source_is_text = is_text_node(v3_node)
-    local is_text = source_is_text and not text_node_needs_wrapper(v3_node, resolved)
+    local source_is_text = is_text_node(dsl_node)
+    local is_text = source_is_text and not text_node_needs_wrapper(dsl_node, resolved)
     
     local runtime_state_names = collect_present_runtime_states(resolved)
     local state_mask_var = nil
@@ -1081,7 +1081,7 @@ compile_v3_node = function(v3_node, env_fn, registry, fills_by_slot, inherited_t
     local state_combo_count = 0
     
     local elem_id_var = nil
-    local id_value = v3_node.id_expr and v3_node.id_expr(env_fn) or nil
+    local id_value = dsl_node.id_expr and dsl_node.id_expr(env_fn) or nil
     
     if not is_text then
         if id_value then
@@ -1214,7 +1214,7 @@ compile_v3_node = function(v3_node, env_fn, registry, fills_by_slot, inherited_t
         if paint_stmt then stmts:insert(paint_stmt) end
     end
     
-    local text_value = v3_node.text_expr and v3_node.text_expr(env_fn) or nil
+    local text_value = dsl_node.text_expr and dsl_node.text_expr(env_fn) or nil
     if text_value then
         local textConfig = resolved.textConfig
         
@@ -1270,10 +1270,10 @@ compile_v3_node = function(v3_node, env_fn, registry, fills_by_slot, inherited_t
         end
     end
     
-    local children_to_compile = v3_node.children
+    local children_to_compile = dsl_node.children
     
-    if v3_node.slot_name and fills_by_slot then
-        local fills = fills_by_slot[v3_node.slot_name]
+    if dsl_node.slot_name and fills_by_slot then
+        local fills = fills_by_slot[dsl_node.slot_name]
         if fills and #fills > 0 then
             children_to_compile = {}
             for _, fill in ipairs(fills) do
@@ -1302,7 +1302,7 @@ local function resolve_component_decl(invoke, env_fn, registry)
     
     local env = env_fn and env_fn() or nil
     local handle = env and env[invoke.name] or nil
-    if type(handle) == "table" and handle._argile_v3_kind == "component" and handle.decl then
+    if type(handle) == "table" and handle._argile_dsl_kind == "component" and handle.decl then
         return handle.decl
     end
     
@@ -1363,8 +1363,8 @@ local function build_component_env_fn(component, invoke, parent_env_fn)
             end
         end
         
-        if type(component._argile_v3_decl_env) == "table" then
-            for k, v in pairs(component._argile_v3_decl_env) do
+        if type(component._argile_dsl_decl_env) == "table" then
+            for k, v in pairs(component._argile_dsl_decl_env) do
                 env[k] = v
             end
         end
@@ -1424,7 +1424,7 @@ local function find_children_marker(node)
     return nil
 end
 
-compile_v3_invoke = function(invoke, env_fn, registry, parent_fills, inherited_text_cfg)
+compile_dsl_invoke = function(invoke, env_fn, registry, parent_fills, inherited_text_cfg)
     local component = resolve_component_decl(invoke, env_fn, registry)
     validate_invoke_args(invoke, component, env_fn)
     
@@ -1485,17 +1485,17 @@ compile_v3_invoke = function(invoke, env_fn, registry, parent_fills, inherited_t
         effective_root.id_expr = invoke.id_expr
     end
     
-    return compile_v3_node(effective_root, component_env_fn, registry, fills_by_slot, inherited_text_cfg)
+    return compile_dsl_node(effective_root, component_env_fn, registry, fills_by_slot, inherited_text_cfg)
 end
 
-function M.compileV3Body(body_nodes, env_fn, registry)
+function M.compileBody(body_nodes, env_fn, registry)
     local stmts = terralib.newlist()
     
     for _, node in ipairs(body_nodes) do
         if AST.IsKind(node, "NodeDecl") then
-            stmts:insert(compile_v3_node(node, env_fn, registry, nil, nil))
+            stmts:insert(compile_dsl_node(node, env_fn, registry, nil, nil))
         elseif AST.IsKind(node, "ComponentInvoke") then
-            stmts:insert(compile_v3_invoke(node, env_fn, registry, nil, nil))
+            stmts:insert(compile_dsl_invoke(node, env_fn, registry, nil, nil))
         elseif AST.IsKind(node, "Splice") then
             local spliced = node.expr_fn(env_fn)
             if spliced ~= nil then
@@ -1510,15 +1510,15 @@ function M.compileV3Body(body_nodes, env_fn, registry)
                 end
             end
         else
-            error("Unknown V3 node type: " .. tostring(node._kind))
+            error("Unknown DSL node type: " .. tostring(node._kind))
         end
     end
     
     return quote [stmts] end
 end
 
-function M.compileV3Function(name, body_nodes, env_fn, registry)
-    local body = M.compileV3Body(body_nodes, env_fn, registry)
+function M.compileFunction(name, body_nodes, env_fn, registry)
+    local body = M.compileBody(body_nodes, env_fn, registry)
     
     local fn = terra()
         [body]
@@ -1530,8 +1530,8 @@ function M.compileV3Function(name, body_nodes, env_fn, registry)
     return fn
 end
 
-function M.compileV3RenderFunction(name, body_nodes, env_fn, registry)
-    local body = M.compileV3Body(body_nodes, env_fn, registry)
+function M.compileRenderFunction(name, body_nodes, env_fn, registry)
+    local body = M.compileBody(body_nodes, env_fn, registry)
     
     local RenderCommandArray = ui.Array(ui.RenderCommand)
     

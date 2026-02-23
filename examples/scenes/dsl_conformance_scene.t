@@ -4,7 +4,7 @@
 
 local ui = require("src.init")
 local hash = require("src.hash")
-import "src/lang.argile_v3"
+import "src/lang.argile"
 
 -- Simple text measurement for conformance
 -- New FFI-friendly signature: out pointer + int32 return

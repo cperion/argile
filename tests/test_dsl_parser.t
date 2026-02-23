@@ -1,7 +1,7 @@
 --[[
-    V3 Parser Tests
+    DSL Parser Tests
     
-    Test parsing of V3 declarations and invocations.
+    Test parsing of DSL declarations and invocations.
 ]]
 
 local C = terralib.includecstring[[
@@ -10,7 +10,7 @@ local C = terralib.includecstring[[
     #include <string.h>
 ]]
 
-local AST = require("src/lang/argile_v3_ast")
+local AST = require("src/lang/argile_ast")
 
 -- Test AST construction
 print("Testing AST construction...")
@@ -73,6 +73,6 @@ print("\nSpan tests: ALL PASS")
 
 -- Summary
 print("\n" .. string.rep("=", 50))
-print("V3 Parser Foundation Tests")
+print("DSL Parser Foundation Tests")
 print("Status: ALL PASS")
 print(string.rep("=", 50))

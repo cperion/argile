@@ -39,9 +39,8 @@ sdl3-demo: build
 test:
 	$(TERRA) tests/test_foundation.t
 	$(TERRA) tests/test_layout.t
-	$(TERRA) tests/test_builder.t
 	$(TERRA) tests/test_runtime_states_integration.t
-	$(TERRA) tests/test_v3_parser.t
+	$(TERRA) tests/test_dsl_parser.t
 
 bench: build-bench
 	$(LUAJIT) bench/compare.lua heavy

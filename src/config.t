@@ -391,7 +391,7 @@ ui.ElementConfig = struct {
     config : ui.ElementConfigUnion
 }
 
--- CAPI/Terra helper bundle mirroring the set of configs V3 can attach to a node.
+-- CAPI/Terra helper bundle mirroring the set of configs DSL can attach to a node.
 -- All fields are optional pointers; nil means "do not attach".
 ui.NodeBuildConfigBundle = struct {
     layoutConfig : &ui.LayoutConfig,

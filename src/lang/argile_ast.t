@@ -1,7 +1,7 @@
 --[[
-    Argile V3 AST Types
+    Argile DSL AST Types
     
-    Tagged Lua tables representing V3 language constructs.
+    Tagged Lua tables representing DSL language constructs.
     All nodes carry source spans for error reporting.
 ]]
 
