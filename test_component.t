@@ -1,4 +1,4 @@
-import "src/lang.argile_v3"
+import "src/lang.argile"
 
 component test_label(props)
     root

@@ -43,6 +43,7 @@ test:
 	$(TERRA) tests/test_dsl_parser.t
 	$(TERRA) tests/test_dsl_compiler_program_ast.t
 	$(TERRA) tests/test_capi_dsl_ast.t
+	$(TERRA) tests/test_dsl_ast_parity.t
 
 bench: build-bench
 	$(LUAJIT) bench/compare.lua heavy

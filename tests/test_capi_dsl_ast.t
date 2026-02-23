@@ -4,7 +4,7 @@ local C = terralib.includecstring [[
 ]]
 
 local ui = require("src.init")
-local AstCapi = require("src/capi_dsl_ast")
+local AstCapi = require("src/capi_dsl_host")
 
 local function expr_lit(b, v)
     return AstCapi.CapiDslAstCreateExprLiteral(b, v)
@@ -299,5 +299,68 @@ do
     end
     if type(err_invalid) ~= "string" or not err_invalid:find("invalid variant value", 1, true) then
         error("expected invalid variant diagnostic, got: " .. tostring(err_invalid))
+    end
+end
+
+do
+    local b, p = build_program_with_variant_invoke("danger")
+    local ok, compiled_q, err = AstCapi.CapiDslAstTryCompileProgramQuote(b, p, function() return {} end)
+    if ok or compiled_q ~= nil then
+        error("expected TryCompileProgramQuote to fail for invalid variant")
+    end
+    if type(err) ~= "string" or not err:find("invalid variant value", 1, true) then
+        error("expected structured try-compile error message")
+    end
+    local last = AstCapi.CapiDslAstGetLastCompileError(b)
+    if type(last) ~= "table" or type(last.code) ~= "number" or type(last.message) ~= "string" then
+        error("expected compile diagnostics table")
+    end
+    if last.message == "" or not last.message:find("invalid variant value", 1, true) then
+        error("expected last compile diagnostic message to match failure")
+    end
+end
+
+do
+    local b = AstCapi.CapiDslAstCreateBuilder()
+    local n = AstCapi.CapiDslAstCreateNodeElement(b)
+    AstCapi.CapiDslAstSetSourceSpan(b, n, "test.dsl", 12, 4, 12, 10, "el", "node-tag")
+    local node_ast = (function()
+        local prog = AstCapi.CapiDslAstCreateProgram(b)
+        AstCapi.CapiDslAstProgramAddBodyItem(b, prog, n)
+        return AstCapi.CapiDslAstGetProgramAst(b, prog).body_nodes[1]
+    end)()
+    if node_ast._span.file ~= "test.dsl" or node_ast._span.line ~= 12 or node_ast._span.column ~= 4 then
+        error("expected source span fields to be attached to AST node")
+    end
+    AstCapi.CapiDslAstSetSourceMeta(b, n, { context = "nodectx", tag = 99 })
+    if node_ast._span.context ~= "nodectx" or node_ast._span.tag ~= 99 then
+        error("expected source metadata merge to update span")
+    end
+    AstCapi.CapiDslAstDestroyBuilder(b)
+end
+
+do
+    local b = AstCapi.CapiDslAstCreateBuilder()
+    local program = AstCapi.CapiDslAstCreateProgram(b)
+    local c1 = AstCapi.CapiDslAstCreateComponent(b, "Dup")
+    local c2 = AstCapi.CapiDslAstCreateComponent(b, "Dup")
+    AstCapi.CapiDslAstProgramAddDecl(b, program, c1)
+    local ok, err = pcall(function()
+        AstCapi.CapiDslAstProgramAddDecl(b, program, c2)
+    end)
+    if ok or not tostring(err):find("duplicate component declaration", 1, true) then
+        error("expected duplicate component declaration validation")
+    end
+end
+
+do
+    local b = AstCapi.CapiDslAstCreateBuilder()
+    local n = AstCapi.CapiDslAstCreateNodeElement(b)
+    AstCapi.CapiDslAstNodeSetChildrenMarker(b, n, true)
+    local ok, err = pcall(function()
+        AstCapi.CapiDslAstNodeSetSlotName(b, n, "content")
+    end)
+    if ok or not tostring(err):find("cannot have both slot and children", 1, true) then
+        error("expected slot/children conflict validation")
     end
 end

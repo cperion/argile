@@ -6,13 +6,31 @@
 
 local P = {}
 
--- Span represents a source location
--- Minimal implementation: line number + context
--- Can be extended to include column, file, etc. if lexer provides them
-function P.Span(line, context)
+-- Span represents a source location.
+-- Backward-compatible call forms:
+--   Span(line, context)
+--   Span({ file=..., line=..., column=..., line_end=..., column_end=..., context=..., tag=... })
+function P.Span(line_or_meta, context)
+    if type(line_or_meta) == "table" then
+        local meta = line_or_meta
+        return {
+            file = meta.file,
+            line = meta.line or 0,
+            column = meta.column or 0,
+            line_end = meta.line_end or meta.line or 0,
+            column_end = meta.column_end or meta.column or 0,
+            context = meta.context or "",
+            tag = meta.tag,
+        }
+    end
     return {
-        line = line or 0,
+        file = nil,
+        line = line_or_meta or 0,
+        column = 0,
+        line_end = line_or_meta or 0,
+        column_end = 0,
         context = context or "",
+        tag = nil,
     }
 end
 
@@ -40,12 +58,25 @@ end
 -- Format an error message with span information
 function P.Error(span, message)
     if span and span.line and span.line > 0 then
-        return string.format("argile v3 error at line %d%s: %s",
-            span.line,
-            span.context ~= "" and " (near '" .. span.context .. "')" or "",
+        local loc
+        if span.file and span.file ~= "" then
+            if span.column and span.column > 0 then
+                loc = string.format("%s:%d:%d", tostring(span.file), span.line, span.column)
+            else
+                loc = string.format("%s:%d", tostring(span.file), span.line)
+            end
+        elseif span.column and span.column > 0 then
+            loc = string.format("line %d:%d", span.line, span.column)
+        else
+            loc = string.format("line %d", span.line)
+        end
+
+        return string.format("argile error at %s%s: %s",
+            loc,
+            (span.context ~= nil and span.context ~= "") and " (near '" .. span.context .. "')" or "",
             message)
     else
-        return "argile v3 error: " .. message
+        return "argile error: " .. message
     end
 end
 
@@ -60,15 +91,31 @@ function P.Merge(span1, span2)
     if not span1 then return span2 end
     if not span2 then return span1 end
     
-    return P.Span(
-        span1.line,  -- use first span's line as anchor
-        span1.context ~= "" and span1.context or span2.context
-    )
+    return P.Span({
+        file = span1.file or span2.file,
+        line = span1.line,  -- use first span's line as anchor
+        column = span1.column or 0,
+        line_end = span2.line_end or span2.line or span1.line_end or span1.line,
+        column_end = span2.column_end or span2.column or span1.column_end or span1.column or 0,
+        context = (span1.context ~= nil and span1.context ~= "") and span1.context or span2.context,
+        tag = span1.tag or span2.tag,
+    })
 end
 
 -- Span for synthetic nodes (no real source location)
 function P.Synthetic()
     return P.Span(0, "")
+end
+
+function P.WithFields(span, fields)
+    local s = P.Span(span or {})
+    if type(fields) ~= "table" then
+        return s
+    end
+    for k, v in pairs(fields) do
+        s[k] = v
+    end
+    return s
 end
 
 return P

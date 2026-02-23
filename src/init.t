@@ -301,7 +301,7 @@ ui.MAXFLOAT = context.MAXFLOAT
 -- from `ui.capi` because it relies on Lua/Terra metaprogramming and cannot be
 -- exported through `terralib.saveobj`.
 function ui.GetDslAstApi()
-    return require("src/capi_dsl_ast")
+    return require("src/capi_dsl_host")
 end
 --
 -- Grouped by domain:

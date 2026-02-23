@@ -169,7 +169,7 @@ local function parse_dsl_content_item(lex, where)
     elseif is_component_invocation and is_component_invocation(lex) then
         return parse_dsl_component_invoke(lex)
     end
-    lex:error("argile v3: expected el, text, [splice], component invocation, or end in " .. where)
+    lex:error("argile: expected el, text, [splice], component invocation, or end in " .. where)
 end
 
 local function starts_v3_node_body(lex)
@@ -356,7 +356,7 @@ local function parse_use_expr_fn(lex)
         repeat
             local arg_name = read_word_like_name(lex, "recipe argument name")
             if args[arg_name] ~= nil then
-                lex:error("argile v3: duplicate recipe argument '" .. arg_name .. "'")
+                lex:error("argile: duplicate recipe argument '" .. arg_name .. "'")
             end
             lex:expect("=")
             args[arg_name] = parse_invoke_arg_value_fn(lex)
@@ -474,7 +474,7 @@ local function parse_dsl_recipe_decl(lex)
         elseif matches_word(lex, "layout") then
             table.insert(body, { kind = "layout", ops = parse_block_ops(lex, "layout") })
         else
-            lex:error("argile v3: expected style, typography, paint, layout, or end in recipe body")
+            lex:error("argile: expected style, typography, paint, layout, or end in recipe body")
         end
         consume_separators(lex)
     end
@@ -509,7 +509,7 @@ local function parse_dsl_theme_decl(lex)
             local recipe = parse_dsl_recipe_decl(lex)
             recipes[recipe.name] = recipe
         else
-            lex:error("argile v3: expected token, recipe, or end in theme body")
+            lex:error("argile: expected token, recipe, or end in theme body")
         end
         consume_separators(lex)
     end
@@ -560,7 +560,7 @@ local function parse_dsl_state_block(lex)
     local state_name = lex:next().value
     
     if not dsl_valid_states[state_name] then
-        lex:error("argile v3: unknown state '" .. tostring(state_name) .. "'")
+        lex:error("argile: unknown state '" .. tostring(state_name) .. "'")
     end
     
     local overlay = AST.StateOverlay(state_name, span)
@@ -573,7 +573,7 @@ local function parse_dsl_state_block(lex)
         elseif matches_word(lex, "paint") then
             overlay.paint_ops = parse_block_ops(lex, "paint")
         else
-            lex:error("argile v3: expected style, typography, paint, or end in state block")
+            lex:error("argile: expected style, typography, paint, or end in state block")
         end
         consume_separators(lex)
     end
@@ -616,7 +616,7 @@ parse_dsl_node_body = function(lex, node)
             -- noop
         elseif matches_word(lex, "id") then
             if node.id_expr then
-                lex:error("argile v3: duplicate id(...) directive")
+                lex:error("argile: duplicate id(...) directive")
             end
             expect_word(lex, "id")
             lex:expect("(")
@@ -624,7 +624,7 @@ parse_dsl_node_body = function(lex, node)
             lex:expect(")")
         elseif matches_word(lex, "part") then
             if node.part_name then
-                lex:error("argile v3: duplicate part(...) directive")
+                lex:error("argile: duplicate part(...) directive")
             end
             expect_word(lex, "part")
             lex:expect("(")
@@ -632,10 +632,10 @@ parse_dsl_node_body = function(lex, node)
             lex:expect(")")
         elseif matches_word(lex, "slot") then
             if node.slot_name then
-                lex:error("argile v3: duplicate slot declaration on same node")
+                lex:error("argile: duplicate slot declaration on same node")
             end
             if node.has_children_marker then
-                lex:error("argile v3: cannot have both slot and children on same node")
+                lex:error("argile: cannot have both slot and children on same node")
             end
             expect_word(lex, "slot")
             lex:expect("(")
@@ -650,16 +650,16 @@ parse_dsl_node_body = function(lex, node)
             expect_word(lex, "end")
         elseif matches_word(lex, "children") then
             if node.has_children_marker then
-                lex:error("argile v3: duplicate children marker")
+                lex:error("argile: duplicate children marker")
             end
             if node.slot_name then
-                lex:error("argile v3: cannot have both slot and children on same node")
+                lex:error("argile: cannot have both slot and children on same node")
             end
             expect_word(lex, "children")
             node.has_children_marker = true
         elseif matches_word(lex, "layout") then
             if #node.layout_ops > 0 then
-                lex:error("argile v3: duplicate layout block")
+                lex:error("argile: duplicate layout block")
             end
             node.layout_ops = parse_block_ops(lex, "layout")
         elseif matches_word(lex, "style") then
@@ -686,7 +686,7 @@ parse_dsl_node_body = function(lex, node)
         elseif matches_word(lex, "state") then
             local overlay = parse_dsl_state_block(lex)
             if node.states[overlay.name] then
-                lex:error("argile v3: duplicate state '" .. overlay.name .. "'")
+                lex:error("argile: duplicate state '" .. overlay.name .. "'")
             end
             node.states[overlay.name] = overlay
         elseif matches_word(lex, "el") then
@@ -705,7 +705,7 @@ parse_dsl_node_body = function(lex, node)
         elseif is_component_invocation(lex) then
             table.insert(node.children, parse_dsl_component_invoke(lex))
         else
-            lex:error("argile v3: unexpected token in node body")
+            lex:error("argile: unexpected token in node body")
         end
         consume_separators(lex)
     end
@@ -807,16 +807,16 @@ local function parse_dsl_component_decl(lex)
         if matches_word(lex, "variant") then
             local variant = parse_dsl_variant_decl(lex)
             if variants[variant.name] then
-                lex:error("argile v3: duplicate variant '" .. variant.name .. "'")
+                lex:error("argile: duplicate variant '" .. variant.name .. "'")
             end
             variants[variant.name] = variant
         elseif matches_word(lex, "root") then
             if root then
-                lex:error("argile v3: duplicate root block (only one allowed per component)")
+                lex:error("argile: duplicate root block (only one allowed per component)")
             end
             root = parse_dsl_root_block(lex)
         else
-            lex:error("argile v3: expected variant, root, or end in component body")
+            lex:error("argile: expected variant, root, or end in component body")
         end
         consume_separators(lex)
     end
@@ -863,7 +863,7 @@ local function parse_dsl_invoke_body(lex, invoke)
             -- noop
         elseif matches_word(lex, "id") then
             if invoke.id_expr then
-                lex:error("argile v3: duplicate id(...) in invocation body")
+                lex:error("argile: duplicate id(...) in invocation body")
             end
             expect_word(lex, "id")
             lex:expect("(")
@@ -899,7 +899,7 @@ parse_dsl_component_invoke = function(lex)
         repeat
             local arg_name = read_word_like_name(lex, "argument name")
             if args[arg_name] ~= nil then
-                lex:error("argile v3: duplicate argument '" .. arg_name .. "'")
+                lex:error("argile: duplicate argument '" .. arg_name .. "'")
             end
             lex:expect("=")
             args[arg_name] = parse_invoke_arg_value_fn(lex)

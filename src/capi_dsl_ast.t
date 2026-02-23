@@ -1,5 +1,5 @@
 local AST = require("src/lang/ast")
-local DslCompiler = require("src/dsl_compiler")
+local Span = require("src/lang/argile_span")
 
 local M = {}
 
@@ -127,6 +127,10 @@ local function resolve_op(builder, op_handle)
     return resolve(builder, op_handle, "op")
 end
 
+local function resolve_any(builder, handle)
+    return resolve(builder, handle, handle and handle.pool or nil)
+end
+
 local function append_node_like(list, node_like)
     list[#list + 1] = node_like
 end
@@ -155,6 +159,69 @@ local function add_op_to_block_list(block_list, block_kind, op)
     else
         table.insert(block_list, { kind = block_kind, ops = { op } })
     end
+end
+
+local function has_value(list, needle)
+    for _, v in ipairs(list or {}) do
+        if v == needle then return true end
+    end
+    return false
+end
+
+local function assert_ast_object(value, handle)
+    if type(value) ~= "table" then
+        error("argile: source metadata can only be attached to table-backed AST objects (" .. tostring(handle.pool) .. ")")
+    end
+end
+
+local function assert_no_duplicate_named_decls(list, name, label)
+    for _, existing in ipairs(list) do
+        if existing.name == name then
+            error("argile: duplicate " .. label .. " declaration: " .. tostring(name))
+        end
+    end
+end
+
+local function validate_component_template(component_name, root_node)
+    local seen_slots = {}
+
+    local function visit(node)
+        if not AST.IsKind(node, "NodeDecl") then
+            return
+        end
+
+        if node.part_name == "root" then
+            error("argile: part name 'root' is reserved (implicit component root path) in component '" .. tostring(component_name) .. "'")
+        end
+
+        if node.slot_name then
+            if seen_slots[node.slot_name] ~= nil then
+                error("argile: duplicate slot '" .. tostring(node.slot_name) .. "' in component '" .. tostring(component_name) .. "' (slot names must be unique per component)")
+            end
+            seen_slots[node.slot_name] = true
+        end
+
+        local sibling_parts = {}
+        for _, child in ipairs(node.children or {}) do
+            if AST.IsKind(child, "NodeDecl") and child.part_name ~= nil then
+                if child.part_name == "root" then
+                    error("argile: part name 'root' is reserved (implicit component root path) in component '" .. tostring(component_name) .. "'")
+                end
+                if sibling_parts[child.part_name] then
+                    error("argile: duplicate sibling part '" .. tostring(child.part_name) .. "' in component '" .. tostring(component_name) .. "'")
+                end
+                sibling_parts[child.part_name] = true
+            end
+        end
+
+        for _, child in ipairs(node.children or {}) do
+            if AST.IsKind(child, "NodeDecl") then
+                visit(child)
+            end
+        end
+    end
+
+    visit(root_node)
 end
 
 local function node_op_target(node, block_kind)
@@ -228,6 +295,11 @@ function M.CapiDslAstProgramAddDecl(builder, program_h, decl_h)
         error("argile: unsupported top-level declaration handle kind '" .. tostring(decl_h.pool) .. "'")
     end
     assert_decl_item(decl)
+    if AST.IsKind(decl, "ThemeDecl") then
+        assert_no_duplicate_named_decls(program.decls, decl.name, "theme")
+    elseif AST.IsKind(decl, "ComponentDecl") then
+        assert_no_duplicate_named_decls(program.decls, decl.name, "component")
+    end
     table.insert(program.decls, decl)
     return true
 end
@@ -247,6 +319,33 @@ end
 
 function M.CapiDslAstGetProgramAst(builder, program_h)
     return resolve(builder, program_h, "program")
+end
+
+function M.CapiDslAstSetSourceSpan(builder, handle, file, line, column, line_end, column_end, context, user_tag)
+    local value = resolve_any(builder, handle)
+    assert_ast_object(value, handle)
+
+    local existing = value._span or Span.Synthetic()
+    value._span = Span.WithFields(existing, {
+        file = file,
+        line = tonumber(line) or existing.line or 0,
+        column = tonumber(column) or existing.column or 0,
+        line_end = tonumber(line_end) or tonumber(line) or existing.line_end or existing.line or 0,
+        column_end = tonumber(column_end) or tonumber(column) or existing.column_end or existing.column or 0,
+        context = context ~= nil and tostring(context) or existing.context or "",
+        tag = user_tag ~= nil and user_tag or existing.tag,
+    })
+    return true
+end
+
+function M.CapiDslAstSetSourceMeta(builder, handle, meta)
+    if type(meta) ~= "table" then
+        error("argile: source metadata must be a table")
+    end
+    local value = resolve_any(builder, handle)
+    assert_ast_object(value, handle)
+    value._span = Span.WithFields(value._span or Span.Synthetic(), meta)
+    return true
 end
 
 -- ============================================================================
@@ -371,6 +470,9 @@ end
 function M.CapiDslAstThemeAddToken(builder, theme_h, token_h)
     local theme = resolve(builder, theme_h, "theme")
     local token = resolve(builder, token_h, "token")
+    if theme.tokens[token.path] ~= nil then
+        error("argile: duplicate token declaration '" .. tostring(token.path) .. "' in theme '" .. tostring(theme.name) .. "'")
+    end
     theme.tokens[token.path] = token
     return true
 end
@@ -382,6 +484,9 @@ end
 
 function M.CapiDslAstRecipeAddParam(builder, recipe_h, param_name)
     local recipe = resolve(builder, recipe_h, "recipe")
+    if has_value(recipe.params, param_name) then
+        error("argile: duplicate recipe param '" .. tostring(param_name) .. "'")
+    end
     table.insert(recipe.params, param_name)
     return true
 end
@@ -396,6 +501,9 @@ end
 function M.CapiDslAstThemeAddRecipe(builder, theme_h, recipe_h)
     local theme = resolve(builder, theme_h, "theme")
     local recipe = resolve(builder, recipe_h, "recipe")
+    if theme.recipes[recipe.name] ~= nil then
+        error("argile: duplicate recipe declaration '" .. tostring(recipe.name) .. "' in theme '" .. tostring(theme.name) .. "'")
+    end
     theme.recipes[recipe.name] = recipe
     return true
 end
@@ -411,6 +519,9 @@ end
 
 function M.CapiDslAstComponentAddParam(builder, component_h, param_name)
     local component = resolve(builder, component_h, "component")
+    if has_value(component.params, param_name) then
+        error("argile: duplicate component param '" .. tostring(param_name) .. "' in component '" .. tostring(component.name) .. "'")
+    end
     table.insert(component.params, param_name)
     return true
 end
@@ -428,6 +539,9 @@ function M.CapiDslAstVariantAddValue(builder, variant_h, value)
     if type(value) ~= "string" then
         error("argile: variant values must be strings/symbol names")
     end
+    if has_value(variant.values, value) then
+        error("argile: duplicate variant value '" .. tostring(value) .. "' in variant '" .. tostring(variant.name) .. "'")
+    end
     table.insert(variant.values, value)
     return true
 end
@@ -435,6 +549,9 @@ end
 function M.CapiDslAstComponentAddVariant(builder, component_h, variant_h)
     local component = resolve(builder, component_h, "component")
     local variant = resolve(builder, variant_h, "variant")
+    if component.variants[variant.name] ~= nil then
+        error("argile: duplicate variant '" .. tostring(variant.name) .. "' in component '" .. tostring(component.name) .. "'")
+    end
     component.variants[variant.name] = variant
     return true
 end
@@ -445,6 +562,10 @@ function M.CapiDslAstComponentSetRootNode(builder, component_h, node_h)
     if not AST.IsKind(node, "NodeDecl") then
         error("argile: component root must be NodeDecl")
     end
+    if component.root ~= nil then
+        error("argile: duplicate root block (only one allowed per component)")
+    end
+    validate_component_template(component.name, node)
     component.root = node
     return true
 end
@@ -466,31 +587,55 @@ function M.CapiDslAstNodeSetTextExpr(builder, node_h, expr_h)
     if node.kind ~= "text" then
         error("argile: text expression can only be set on text nodes")
     end
+    if node.text_expr ~= nil then
+        error("argile: duplicate text(...) payload on text node")
+    end
     node.text_expr = resolve_expr(builder, expr_h)
     return true
 end
 
 function M.CapiDslAstNodeSetIdExpr(builder, node_h, expr_h)
     local node = resolve(builder, node_h, "node")
+    if node.id_expr ~= nil then
+        error("argile: duplicate id(...) directive")
+    end
     node.id_expr = resolve_expr(builder, expr_h)
     return true
 end
 
 function M.CapiDslAstNodeSetPartName(builder, node_h, part_name)
     local node = resolve(builder, node_h, "node")
+    if node.part_name ~= nil then
+        error("argile: duplicate part(...) directive")
+    end
     node.part_name = part_name
     return true
 end
 
 function M.CapiDslAstNodeSetSlotName(builder, node_h, slot_name)
     local node = resolve(builder, node_h, "node")
+    if node.slot_name ~= nil then
+        error("argile: duplicate slot declaration on same node")
+    end
+    if node.has_children_marker then
+        error("argile: cannot have both slot and children on same node")
+    end
     node.slot_name = slot_name
     return true
 end
 
 function M.CapiDslAstNodeSetChildrenMarker(builder, node_h, enabled)
     local node = resolve(builder, node_h, "node")
-    node.has_children_marker = not not enabled
+    enabled = not not enabled
+    if enabled then
+        if node.has_children_marker then
+            error("argile: duplicate children marker")
+        end
+        if node.slot_name ~= nil then
+            error("argile: cannot have both slot and children on same node")
+        end
+    end
+    node.has_children_marker = enabled
     return true
 end
 
@@ -569,6 +714,9 @@ end
 
 function M.CapiDslAstInvokeSetIdExpr(builder, invoke_h, expr_h)
     local invoke = resolve(builder, invoke_h, "invoke")
+    if invoke.id_expr ~= nil then
+        error("argile: duplicate id(...) in invocation body")
+    end
     invoke.id_expr = resolve_expr(builder, expr_h)
     return true
 end
@@ -616,25 +764,6 @@ function M.CapiDslAstCreateSplice(builder, expr_fn)
         error("argile: expected splice expr function")
     end
     return alloc(builder, "splice", AST.Splice(expr_fn))
-end
-
--- ============================================================================
--- Host-side compile entrypoints (canonical compiler path)
--- ============================================================================
-
-function M.CapiDslAstCompileProgramQuote(builder, program_h, env_fn, registry)
-    local program = resolve(builder, program_h, "program")
-    return DslCompiler.compileAstProgram(program, env_fn, registry)
-end
-
-function M.CapiDslAstCompileProgramFunction(builder, name, program_h, env_fn, registry)
-    local program = resolve(builder, program_h, "program")
-    return DslCompiler.compileAstProgramFunction(name, program, env_fn, registry)
-end
-
-function M.CapiDslAstCompileProgramRenderFunction(builder, name, program_h, env_fn, registry)
-    local program = resolve(builder, program_h, "program")
-    return DslCompiler.compileAstProgramRenderFunction(name, program, env_fn, registry)
 end
 
 function M.CapiDslAstDebugProgram(builder, program_h)
