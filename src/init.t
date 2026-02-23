@@ -297,6 +297,13 @@ ui.MAXFLOAT = context.MAXFLOAT
 -- Stable C/FFI-facing function surface. This is intentionally narrower
 -- than the full Terra `ui` table, which still exposes internal helpers.
 --
+-- Host-side DSL AST builder/compiler API is intentionally exposed separately
+-- from `ui.capi` because it relies on Lua/Terra metaprogramming and cannot be
+-- exported through `terralib.saveobj`.
+function ui.GetDslAstApi()
+    return require("src/capi_dsl_ast")
+end
+--
 -- Grouped by domain:
 --   1. Context/Init
 --   2. Layout/Frame

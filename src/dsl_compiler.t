@@ -13,8 +13,9 @@
 
 local ui = require("src.init")
 local style = require("src/style/core")
-local AST = require("src/lang/argile_ast")
+local AST = require("src/lang/ast")
 local Span = require("src/lang/argile_span")
+local DslRegistry = require("src/dsl_registry")
 
 local M = {}
 
@@ -108,6 +109,10 @@ local function normalize_value(value)
         return value.name
     end
     return value
+end
+
+local function eval_dsl_value(expr, env_fn)
+    return normalize_value(AST.EvalExpr(expr, env_fn))
 end
 
 local function resolve_symbol(value, is_variant, env_fn)
@@ -506,8 +511,8 @@ local function apply_layout_ops(base_layout, ops, env_fn)
         local n = op.name
         local args = op.args or {}
         local evaluated_args = {}
-        for i, arg_fn in ipairs(args) do
-            evaluated_args[i] = normalize_value(arg_fn(env_fn))
+        for i, arg_expr in ipairs(args) do
+            evaluated_args[i] = eval_dsl_value(arg_expr, env_fn)
         end
         
         if n == "width" then
@@ -609,8 +614,8 @@ local function apply_style_ops(base_shared, ops, env_fn)
         local n = op.name
         local args = op.args or {}
         local evaluated_args = {}
-        for i, arg_fn in ipairs(args) do
-            evaluated_args[i] = normalize_value(arg_fn(env_fn))
+        for i, arg_expr in ipairs(args) do
+            evaluated_args[i] = eval_dsl_value(arg_expr, env_fn)
         end
         
         if n == "bg" then
@@ -649,8 +654,8 @@ local function apply_typography_ops(base_text_config, ops, env_fn)
         local n = op.name
         local args = op.args or {}
         local evaluated_args = {}
-        for i, arg_fn in ipairs(args) do
-            evaluated_args[i] = normalize_value(arg_fn(env_fn))
+        for i, arg_expr in ipairs(args) do
+            evaluated_args[i] = eval_dsl_value(arg_expr, env_fn)
         end
         
         if n == "color" then
@@ -684,8 +689,8 @@ local function apply_paint_ops(base_paint, ops, env_fn)
         local n = op.name
         local args = op.args or {}
         local evaluated_args = {}
-        for i, arg_fn in ipairs(args) do
-            evaluated_args[i] = normalize_value(arg_fn(env_fn))
+        for i, arg_expr in ipairs(args) do
+            evaluated_args[i] = eval_dsl_value(arg_expr, env_fn)
         end
         
         if n == "fill" then
@@ -712,7 +717,7 @@ local function apply_use_patches(node, env_fn)
     local resolved = deep_copy(node)
     
     for _, use_expr in ipairs(node.uses) do
-        local patch = use_expr(env_fn)
+        local patch = AST.EvalExpr(use_expr, env_fn)
         if patch then
             if patch.layout then
                 resolved.layout = merge_into(resolved.layout, patch.layout)
@@ -969,8 +974,8 @@ local function apply_layout_ops(base_layout, ops, env_fn)
         local n = op.name
         local args = op.args or {}
         local evaluated_args = {}
-        for i, arg_fn in ipairs(args) do
-            evaluated_args[i] = normalize_value(arg_fn(env_fn))
+        for i, arg_expr in ipairs(args) do
+            evaluated_args[i] = eval_dsl_value(arg_expr, env_fn)
         end
         
         if n == "width" then
@@ -1081,7 +1086,7 @@ compile_dsl_node = function(dsl_node, env_fn, registry, fills_by_slot, inherited
     local state_combo_count = 0
     
     local elem_id_var = nil
-    local id_value = dsl_node.id_expr and dsl_node.id_expr(env_fn) or nil
+    local id_value = dsl_node.id_expr and AST.EvalExpr(dsl_node.id_expr, env_fn) or nil
     
     if not is_text then
         if id_value then
@@ -1214,7 +1219,7 @@ compile_dsl_node = function(dsl_node, env_fn, registry, fills_by_slot, inherited
         if paint_stmt then stmts:insert(paint_stmt) end
     end
     
-    local text_value = dsl_node.text_expr and dsl_node.text_expr(env_fn) or nil
+    local text_value = dsl_node.text_expr and AST.EvalExpr(dsl_node.text_expr, env_fn) or nil
     if text_value then
         local textConfig = resolved.textConfig
         
@@ -1324,7 +1329,7 @@ local function validate_invoke_args(invoke, component, env_fn)
         seen_args[arg_name] = true
         
         if declared_variants[arg_name] then
-            local raw = arg_expr(env_fn)
+            local raw = AST.EvalExpr(arg_expr, env_fn)
             local value = resolve_symbol(raw, true, env_fn)
             local valid = false
             for _, valid_value in ipairs(declared_variants[arg_name]) do
@@ -1350,7 +1355,7 @@ local function build_component_env_fn(component, invoke, parent_env_fn)
     
     local props = {}
     for arg_name, arg_expr in pairs(invoke.args) do
-        local raw = arg_expr(parent_env_fn)
+        local raw = AST.EvalExpr(arg_expr, parent_env_fn)
         props[arg_name] = resolve_symbol(raw, declared_variants[arg_name], parent_env_fn)
     end
     
@@ -1488,7 +1493,7 @@ compile_dsl_invoke = function(invoke, env_fn, registry, parent_fills, inherited_
     return compile_dsl_node(effective_root, component_env_fn, registry, fills_by_slot, inherited_text_cfg)
 end
 
-function M.compileBody(body_nodes, env_fn, registry)
+function M.compileAstBody(body_nodes, env_fn, registry)
     local stmts = terralib.newlist()
     
     for _, node in ipairs(body_nodes) do
@@ -1517,8 +1522,95 @@ function M.compileBody(body_nodes, env_fn, registry)
     return quote [stmts] end
 end
 
-function M.compileFunction(name, body_nodes, env_fn, registry)
-    local body = M.compileBody(body_nodes, env_fn, registry)
+local function clone_registry(registry)
+    local out = DslRegistry.Create()
+    if not registry then
+        return out
+    end
+    for k, v in pairs(registry.components or {}) do
+        out.components[k] = v
+    end
+    for k, v in pairs(registry.themes or {}) do
+        out.themes[k] = v
+    end
+    return out
+end
+
+function M.compileAstProgram(program, env_fn, registry)
+    if not AST.IsKind(program, "Program") then
+        error("argile: compileAstProgram expects AST.Program")
+    end
+
+    local compile_registry = clone_registry(registry)
+
+    local base_env = env_fn and env_fn() or nil
+    local decl_scope = {}
+
+    local function merged_decl_env()
+        if base_env == nil and next(decl_scope) == nil then
+            return {}
+        end
+        local env = {}
+        if type(base_env) == "table" then
+            for k, v in pairs(base_env) do
+                env[k] = v
+            end
+        end
+        for k, v in pairs(decl_scope) do
+            env[k] = v
+        end
+        return env
+    end
+
+    for _, decl in ipairs(program.decls or {}) do
+        if AST.IsKind(decl, "ThemeDecl") then
+            compile_registry.themes[decl.name] = decl
+            decl_scope[decl.name] = DslRegistry.BuildThemeValue(decl, merged_decl_env())
+        elseif AST.IsKind(decl, "ComponentDecl") then
+            compile_registry.components[decl.name] = decl
+            decl_scope[decl.name] = DslRegistry.BuildComponentHandle(decl, merged_decl_env())
+        else
+            error("argile: unsupported top-level decl in AST.Program: " .. tostring(AST.GetKind(decl)))
+        end
+    end
+
+    local function program_env_fn()
+        return merged_decl_env()
+    end
+
+    return M.compileAstBody(program.body_nodes or {}, program_env_fn, compile_registry)
+end
+
+function M.compileAstProgramFunction(name, program, env_fn, registry)
+    local body = M.compileAstProgram(program, env_fn, registry)
+
+    local fn = terra()
+        [body]
+    end
+    fn:setinlined(false)
+
+    _G[name] = fn
+    return fn
+end
+
+function M.compileAstProgramRenderFunction(name, program, env_fn, registry)
+    local body = M.compileAstProgram(program, env_fn, registry)
+
+    local RenderCommandArray = ui.Array(ui.RenderCommand)
+
+    local fn = terra() : &RenderCommandArray
+        ui.BeginLayout(1920.0, 1080.0)
+        [body]
+        return ui.EndLayout()
+    end
+    fn:setinlined(false)
+
+    _G[name] = fn
+    return fn
+end
+
+function M.compileAstFunction(name, body_nodes, env_fn, registry)
+    local body = M.compileAstBody(body_nodes, env_fn, registry)
     
     local fn = terra()
         [body]
@@ -1530,8 +1622,8 @@ function M.compileFunction(name, body_nodes, env_fn, registry)
     return fn
 end
 
-function M.compileRenderFunction(name, body_nodes, env_fn, registry)
-    local body = M.compileBody(body_nodes, env_fn, registry)
+function M.compileAstRenderFunction(name, body_nodes, env_fn, registry)
+    local body = M.compileAstBody(body_nodes, env_fn, registry)
     
     local RenderCommandArray = ui.Array(ui.RenderCommand)
     

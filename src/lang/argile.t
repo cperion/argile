@@ -7,18 +7,15 @@
     - component <name> ... end (component declaration)
 ]]
 
-local AST = require("src/lang/argile_ast")
+local AST = require("src/lang/ast")
 local Span = require("src/lang/argile_span")
 local DslCompiler = require("src/dsl_compiler")
-local style = require("src/style/core")
+local DslRegistry = require("src/dsl_registry")
 local ui = require("src.init")
 
 -- Module-scoped registry for declarations
 -- Populated during eager parsing
-local dsl_registry = {
-    components = {},
-    themes = {},
-}
+local dsl_registry = DslRegistry.Create()
 
 -- ============================================================================
 -- Reserved Keywords
@@ -198,16 +195,11 @@ local function read_word_like_name(lex, expected_what)
 end
 
 -- ============================================================================
--- Expression Value Functions (lazy evaluation)
+-- Expression Value Parsing (AST expressions)
 -- ============================================================================
 
-local function constant_value_fn(value)
-    return function(_environment_function)
-        return value
-    end
-end
-
 local function parse_value_fn(lex, value_map)
+    local span = Span.SpanFromLexer(lex)
     if lex:matches(lex.name) then
         local name = lex:cur().value
         local mapped = value_map and value_map[name]
@@ -217,7 +209,7 @@ local function parse_value_fn(lex, value_map)
             lex:lookaheadmatches(";")
         ) then
             lex:next()
-            return constant_value_fn(mapped)
+            return AST.LiteralExpr(mapped, span)
         end
     end
 
@@ -236,29 +228,11 @@ local function parse_value_fn(lex, value_map)
         if lex.ref then
             lex:ref(path[1])
         end
-        return function(environment_function)
-            local env = environment_function and environment_function() or nil
-            local target = env and env[path[1]] or nil
-            if target == nil then
-                target = rawget(_G, path[1])
-            end
-            for i = 2, #path do
-                if target == nil then
-                    error("argile v3: token path '" .. table.concat(path, ".") .. "' is nil")
-                end
-                target = target[path[i]]
-            end
-            if target == nil then
-                error("argile v3: token path '" .. table.concat(path, ".") .. "' is nil")
-            end
-            return target
-        end
+        return AST.TokenRefExpr(path, span)
     end
 
     local expr = lex:luaexpr()
-    return function(environment_function)
-        return expr(environment_function())
-    end
+    return AST.LuaExpr(expr, span)
 end
 
 -- DSL component invocation args use named syntax and allow bare symbolic values
@@ -278,115 +252,13 @@ local function parse_invoke_arg_value_fn(lex)
         if lex.ref then
             lex:ref(name)
         end
-        return constant_value_fn(AST.Symbol(name, span))
+        return AST.Symbol(name, span)
     end
     return parse_value_fn(lex, nil)
 end
 
-local function normalize_runtime_value(value)
-    if AST.IsKind(value, "Symbol") then
-        return value.name
-    end
-    return value
-end
-
-local function eval_ops_list(ops, env_fn)
-    local out = {}
-    if not ops then return out end
-    for _, op in ipairs(ops) do
-        local args = {}
-        for i, arg_fn in ipairs(op.args or {}) do
-            args[i] = normalize_runtime_value(arg_fn(env_fn))
-        end
-        out[#out + 1] = { name = op.name, args = args }
-    end
-    return out
-end
-
-local function set_nested_path(root, dotted_path, value)
-    local cursor = root
-    local parts = {}
-    for part in dotted_path:gmatch("[^%.]+") do
-        parts[#parts + 1] = part
-    end
-    for i = 1, #parts - 1 do
-        local key = parts[i]
-        local nextv = cursor[key]
-        if type(nextv) ~= "table" or nextv._argile_dsl_kind then
-            nextv = {}
-            cursor[key] = nextv
-        end
-        cursor = nextv
-    end
-    cursor[parts[#parts]] = value
-end
-
-local function build_theme_value(decl, decl_env)
-    local theme = {
-        _argile_dsl_kind = "theme",
-        _argile_dsl_theme_name = decl.name,
-        _argile_dsl_theme_decl = decl,
-    }
-    
-    decl_env = decl_env or {}
-    local decl_env_fn = function() return decl_env end
-    for _, token_decl in pairs(decl.tokens or {}) do
-        local value = normalize_runtime_value(token_decl.value_expr(decl_env_fn))
-        set_nested_path(theme, token_decl.path, value)
-    end
-    
-    local function make_recipe_env_fn(opts)
-        return function()
-            local env = {}
-            for k, v in pairs(decl_env) do
-                env[k] = v
-            end
-            env.opts = opts or {}
-            for k, v in pairs(theme) do
-                if type(k) == "string" and k:sub(1, 10) ~= "_argile_dsl_" then
-                    env[k] = v
-                end
-            end
-            return env
-        end
-    end
-    
-    for recipe_name, recipe_decl in pairs(decl.recipes or {}) do
-        theme[recipe_name] = function(opts)
-            opts = opts or {}
-            local env_fn = make_recipe_env_fn(opts)
-            local patch = style.StylePatch:new()
-            for _, block in ipairs(recipe_decl.body or {}) do
-                local ops = eval_ops_list(block.ops, env_fn)
-                if block.kind == "style" then
-                    patch = style.apply_style_ops(patch, ops)
-                elseif block.kind == "typography" then
-                    patch = style.apply_typography_ops(patch, ops)
-                elseif block.kind == "paint" then
-                    patch = style.apply_paint_ops(patch, ops)
-                elseif block.kind == "layout" then
-                    patch = style.apply_layout_ops(patch, ops)
-                else
-                    error("argile v3: unknown recipe block kind '" .. tostring(block.kind) .. "'")
-                end
-            end
-            return patch
-        end
-    end
-    
-    return theme
-end
-
-local function build_component_handle(decl, decl_env)
-    decl._argile_dsl_decl_env = decl_env or {}
-    return {
-        _argile_dsl_kind = "component",
-        _argile_dsl_component_name = decl.name,
-        decl = decl,
-    }
-end
-
 local function parse_use_expr_fn(lex)
+    local span = Span.SpanFromLexer(lex)
     -- use() accepts either:
     --   1. A dotted path to a pre-computed StylePatch value: use(my_patch)
     --   2. A dotted path + named-arg recipe call: use(theme.recipe(name = val))
@@ -399,10 +271,9 @@ local function parse_use_expr_fn(lex)
     -- Check if it starts with a name (could be a DSL path or a Lua expr)
     if not lex:matches(lex.name) then
         -- Starts with something other than a name — must be a Lua expression
+        local expr_span = Span.SpanFromLexer(lex)
         local expr = lex:luaexpr()
-        return function(environment_function)
-            return expr(environment_function())
-        end
+        return AST.LuaExpr(expr, expr_span)
     end
 
     -- Try to parse a dotted path
@@ -415,32 +286,12 @@ local function parse_use_expr_fn(lex)
     if lex.ref then
         lex:ref(path[1])
     end
-    
-    local function resolve_path(environment_function)
-        local env = environment_function()
-        local target = nil
-        if env ~= nil then
-            target = env[path[1]]
-        end
-        if target == nil then
-            target = rawget(_G, path[1])
-        end
-        for i = 2, #path do
-            if target == nil then break end
-            target = target[path[i]]
-        end
-        return target
-    end
+
+    local callee_expr = AST.PathRefExpr(path, span)
     
     -- use(patch_value) — no call, just a path to a pre-computed value
     if not lex:matches("(") then
-        return function(environment_function)
-            local target = resolve_path(environment_function)
-            if target == nil then
-                error("argile v3: use target '" .. table.concat(path, ".") .. "' is nil")
-            end
-            return target
-        end
+        return callee_expr
     end
     
     -- Peek ahead: is this a named-arg recipe call `recipe(name = ...)` or
@@ -495,13 +346,7 @@ local function parse_use_expr_fn(lex)
     -- Empty call: recipe()
     if lex:matches(")") then
         lex:expect(")")
-        return function(environment_function)
-            local target = resolve_path(environment_function)
-            if type(target) ~= "function" then
-                error("argile v3: use target '" .. table.concat(path, ".") .. "' is not callable")
-            end
-            return target({})
-        end
+        return AST.CallExpr(callee_expr, "named", span)
     end
     
     -- Check for named-arg pattern: <name> "="
@@ -517,18 +362,10 @@ local function parse_use_expr_fn(lex)
             args[arg_name] = parse_invoke_arg_value_fn(lex)
         until not lex:nextif(",")
         lex:expect(")")
-        
-        return function(environment_function)
-            local target = resolve_path(environment_function)
-            if type(target) ~= "function" then
-                error("argile v3: use target '" .. table.concat(path, ".") .. "' is not callable")
-            end
-            local opts = {}
-            for name, arg_fn in pairs(args) do
-                opts[name] = normalize_runtime_value(arg_fn(environment_function))
-            end
-            return target(opts)
-        end
+
+        local call = AST.CallExpr(callee_expr, "named", span)
+        call.named_args = args
+        return call
     end
     
     -- Generic positional-arg call: use(path.fn(expr1, expr2, ...))
@@ -536,23 +373,16 @@ local function parse_use_expr_fn(lex)
     -- Parse positional arguments as Lua expressions.
     local pos_args = {}
     repeat
+        local expr_span = Span.SpanFromLexer(lex)
         local expr = lex:luaexpr()
+        expr = AST.LuaExpr(expr, expr_span)
         pos_args[#pos_args + 1] = expr
     until not lex:nextif(",")
     lex:expect(")")
-    
-    return function(environment_function)
-        local target = resolve_path(environment_function)
-        if type(target) ~= "function" then
-            error("argile v3: use target '" .. table.concat(path, ".") .. "' is not callable")
-        end
-        local env = environment_function()
-        local evaluated = {}
-        for i, expr_fn in ipairs(pos_args) do
-            evaluated[i] = expr_fn(env)
-        end
-        return target(unpack(evaluated))
-    end
+
+    local call = AST.CallExpr(callee_expr, "positional", span)
+    call.pos_args = pos_args
+    return call
 end
 
 -- ============================================================================
@@ -1126,8 +956,7 @@ end
 -- Clear registry for fresh parse (called at module load)
 -- In practice, declarations persist within a module
 local function clear_registry()
-    dsl_registry.components = {}
-    dsl_registry.themes = {}
+    DslRegistry.Clear(dsl_registry)
 end
 
 local language = {
@@ -1146,7 +975,7 @@ local language = {
         local body = parse_argile_body(lex)
         
         return function(environment_function)
-            return DslCompiler.compileBody(body, environment_function, dsl_registry)
+            return DslCompiler.compileAstBody(body, environment_function, dsl_registry)
         end
     end,
     
@@ -1156,19 +985,19 @@ local language = {
             local decl = parse_dsl_theme_decl(lex)
             return function(env_fn)
                 local captured = env_fn and env_fn() or {}
-                return build_theme_value(decl, captured)
+                return DslRegistry.BuildThemeValue(decl, captured)
             end, { decl.name }
         elseif matches_word(lex, "component") then
             local decl = parse_dsl_component_decl(lex)
             return function(env_fn)
                 local captured = env_fn and env_fn() or {}
-                return build_component_handle(decl, captured)
+                return DslRegistry.BuildComponentHandle(decl, captured)
             end, { decl.name }
         elseif matches_word(lex, "argile") then
             lex:expect("argile")
             local body = parse_argile_body(lex)
             return function(environment_function)
-                return DslCompiler.compileBody(body, environment_function, dsl_registry)
+                return DslCompiler.compileAstBody(body, environment_function, dsl_registry)
             end
         else
             lex:errorexpected("theme, component, or argile")
@@ -1181,19 +1010,19 @@ local language = {
             local decl = parse_dsl_theme_decl(lex)
             return function(env_fn)
                 local captured = env_fn and env_fn() or {}
-                return build_theme_value(decl, captured)
+                return DslRegistry.BuildThemeValue(decl, captured)
             end, { decl.name }
         elseif matches_word(lex, "component") then
             local decl = parse_dsl_component_decl(lex)
             return function(env_fn)
                 local captured = env_fn and env_fn() or {}
-                return build_component_handle(decl, captured)
+                return DslRegistry.BuildComponentHandle(decl, captured)
             end, { decl.name }
         elseif matches_word(lex, "argile") then
             lex:expect("argile")
             local body = parse_argile_body(lex)
             return function(environment_function)
-                return DslCompiler.compileBody(body, environment_function, dsl_registry)
+                return DslCompiler.compileAstBody(body, environment_function, dsl_registry)
             end
         else
             lex:errorexpected("theme, component, or argile")

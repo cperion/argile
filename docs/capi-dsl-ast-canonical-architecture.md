@@ -5,6 +5,9 @@
 - Proposed architecture and implementation plan
 - Intended to guide the next C API effort after the rename cleanup pass
 - This document defines the full target surface and migration path
+- Reoriented after confirming `terralib.saveobj` export constraints:
+  - shared-library `ui.capi` can export Terra functions only
+  - the current Lua/Terra metaprogramming compiler cannot be exported directly
 
 ## Why This Exists
 
@@ -20,14 +23,15 @@ This document exists to lock that architecture in place and prevent:
 
 ## Problem Statement
 
-We need a C API that enables bindings users (LuaJIT, Rust, Python, etc.) to:
+We need an Argile-facing API architecture that enables bindings users (LuaJIT, Rust, Python, etc.) to:
 
 - build Argile programs (themes, components, nodes, invokes, fills, states, recipes)
 - build Argile expressions (literals, symbols, refs, token refs, recipe calls, etc.)
-- compile those ASTs through the canonical Argile compiler
+- compile those ASTs through the canonical Argile compiler when running in a host Lua/Terra environment
+- consume Argile runtime/layout/render APIs through a stable shared-library C ABI (`ui.capi`)
 - obtain the same behavior as parser-produced Argile DSL for equivalent input
 
-The C API must not implement its own separate semantic engine or emitter.
+No API layer is allowed to implement its own separate semantic engine or emitter.
 
 ## Architectural Decision (Core Rule)
 
@@ -40,6 +44,22 @@ The canonical architecture is:
 
 There must be one semantic compiler path.
 
+### Execution-Phase Constraint (Critical)
+
+Argile currently has two execution phases:
+
+- Host-side Lua/Terra metaprogramming phase (parser, AST construction, quote generation, compiler logic)
+- Runtime/shared-library phase (`saveobj` exports through `ui.capi`)
+
+`terralib.saveobj` can export Terra functions, but not plain Lua functions. Therefore:
+
+- the current host-side `dsl_compiler` cannot be directly exported through `ui.capi`
+- a shared-library runtime C ABI cannot directly call the current Lua compiler path
+
+This is a phase boundary, not a semantic boundary.
+
+The architecture must preserve one semantic source of truth while acknowledging that host-side compile and runtime shared-library bindings are different surfaces today.
+
 ### Explicitly Rejected Architecture
 
 The following is not acceptable as the long-term implementation:
@@ -51,10 +71,10 @@ That architecture duplicates semantics and causes drift.
 
 ## Scope (Full Target Surface)
 
-This document covers the complete target for the Argile DSL-facing C API:
+This document covers the complete target for Argile DSL-facing APIs across both execution phases:
 
-- full AST construction API
-- compile entrypoints for AST
+- full AST construction API (host-side and/or exportable data-builder forms)
+- compile entrypoints for AST (host-side canonical compiler now, runtime ABI later if compiler lowering becomes Terra-exportable)
 - diagnostics and validation
 - feature parity expectations vs parser DSL
 - testing and conformance strategy
@@ -67,7 +87,7 @@ This document does not define runtime rendering internals (`context.t`, layout a
 This architecture is written against the renamed canonical DSL paths:
 
 - parser: `argile/src/lang/argile.t`
-- AST types: `argile/src/lang/argile_ast.t`
+- AST types: `argile/src/lang/ast.t`
 - compiler: `argile/src/dsl_compiler.t`
 - C API export aggregator: `argile/src/capi.t`
 - C API export table assembly: `argile/src/capi_dsl_exports.t` (if retained / expanded)
@@ -125,17 +145,64 @@ AST and compile entrypoints must be expressible without requiring Lua closures f
 
 Implementation can be phased, but the architecture and acceptance criteria must cover the full target surface from the start.
 
+### 6. Phase-Correct APIs
+
+Do not plan features for the wrong execution phase:
+
+- Host-side AST + compiler APIs may rely on Lua/Terra metaprogramming
+- Shared-library `ui.capi` exports must be Terra functions / exportable structs only
+
+If a capability is not currently implementable in shared-library ABI form, document it as host-only or future-runtime work instead of building a duplicate semantic path.
+
+## API Surfaces (Reoriented)
+
+The project should explicitly maintain two API surfaces that share the same AST and semantics.
+
+### A. Host-Side DSL AST + Compiler API (Lua/Terra)
+
+Purpose:
+
+- full Argile language tooling
+- AST construction
+- canonical compilation through `dsl_compiler`
+- testing, codegen, authoring tools, embedded host integrations
+
+Properties:
+
+- may use Lua tables / metaprogramming
+- may call parser/compiler modules directly
+- not a `saveobj`-exported shared-library ABI
+
+### B. Runtime Shared-Library C ABI (`ui.capi`)
+
+Purpose:
+
+- runtime layout/render/input APIs for all languages
+- stable exported structs/constants/functions
+- optional AST data builder/storage API if implemented in Terra-exportable form
+
+Properties:
+
+- Terra-exported functions only
+- no direct calls into plain Lua compiler functions
+- no duplicate DSL semantics
+
+### Long-Term Convergence Goal
+
+If the project later needs runtime shared-library AST compilation for non-Terra hosts, the semantic lowering/compiler path must be moved (or duplicated at the backend level only) into Terra-exportable/runtime-compatible code while keeping semantics shared.
+
 ## Canonical Pipeline (Target State)
 
 ### High-Level Flow
 
 1. Input frontend creates Argile AST:
    - parser (`lang/argile.t`)
-   - C API (`CapiDslAst*`)
+   - host-side AST API (`CapiDslAst*` host surface and/or Terra builders)
+   - runtime ABI AST builder/storage API (optional/future, Terra-exportable subset or full builder)
    - optional native Terra builder
-2. Canonical compiler validates and resolves AST semantics
+2. Canonical compiler validates and resolves AST semantics (host-side today)
 3. Compiler lowers into runtime/backend operations
-4. Runtime executes layout/render pipeline
+4. Runtime executes layout/render pipeline via `ui.capi` or direct Terra calls
 
 ### Key Requirement
 
@@ -143,11 +210,22 @@ The semantic resolution step (components, variants, state overlays, `use(...)`, 
 
 Backend differences are acceptable. Semantic differences are not.
 
+### Present Capability vs Future Capability
+
+Present:
+
+- Host-side AST -> canonical compiler -> Terra quote/runtime emission
+- Runtime `ui.capi` -> runtime engine APIs (layout/render/input)
+
+Future (optional, if needed):
+
+- Runtime `ui.capi` AST -> canonical semantics in Terra-exportable/runtime form -> runtime emission
+
 ## AST as the C API Target
 
 ## AST Role
 
-`argile/src/lang/argile_ast.t` defines the language constructs. The C API should expose constructors and mutators for the same constructs (or a canonicalized AST schema derived from them if parser-only fields exist).
+`argile/src/lang/ast.t` defines the language constructs. The C API should expose constructors and mutators for the same constructs (or a canonicalized AST schema derived from them if parser-only fields exist).
 
 ## AST Node Families (Current and Target)
 
@@ -184,7 +262,7 @@ Required for full C API parity (canonical AST expansion if not present yet):
 
 ## AST C ABI Suitability Requirements
 
-If `argile_ast.t` contains parser-only or Lua-only constructs, define a canonical AST schema that:
+If `ast.t` contains parser-only or Lua-only constructs, define a canonical AST schema that:
 
 - preserves DSL semantics
 - is constructible through C API
@@ -200,16 +278,21 @@ Examples of likely special handling:
 
 ## API Scope
 
-The public C API for DSL/AST should expose:
+The public AST-facing API should expose:
 
 - builder/context lifecycle
 - AST object creation and destruction
 - object graph wiring (append children, set roots, attach declarations)
 - typed expression construction
-- compile entrypoints
+- compile entrypoints (host-side today, runtime ABI later only if compiler path becomes Terra-exportable)
 - validation and diagnostics
 
-It must not expose parser internals or Lua table layouts.
+It must not expose parser internals.
+
+Note:
+
+- Host-side AST APIs may internally use Lua tables while presenting a structured interface.
+- Shared-library ABI APIs must use exportable Terra structs/opaque handles and cannot expose Lua tables.
 
 ## Handle Model
 
@@ -378,21 +461,27 @@ This may require refactoring `argile/src/dsl_compiler.t` so that:
 - parser-specific conveniences/closures are normalized before semantic compile
 - compile entrypoints are callable without parser-only context
 
-## Compile Entry Points (C API)
+## Compile Entry Points (C API / Host API)
 
-Required capability:
+Required capability (project-wide):
 
 - compile AST program/body into canonical executable/entry representation
 
 Possible exposed forms (implementation choice):
 
-- compile to Terra function/exported symbol
-- compile to runtime executable plan
-- compile-and-execute helper for current context
+- host-side compile to Terra quote / Terra function
+- host-side compile-and-bind helper for tools/tests
+- future runtime ABI compile to runtime executable plan (only after Terra-exportable semantic lowering exists)
 
 What matters:
 
 - all routes use the same canonical semantic lowering
+
+### Immediate Constraint
+
+The current `dsl_compiler` is host-side Lua/Terra metaprogramming code and cannot be called through shared-library `ui.capi` directly.
+
+Therefore, `CapiDslAstCompile*` in the near term should be implemented as host-side API entrypoints (Lua/Terra environment), not as `saveobj` shared-library exports.
 
 ## No Separate Semantic Path
 
@@ -591,7 +680,7 @@ Feature flags must describe real exported capabilities, not internal implementat
 
 The internal split should reflect responsibilities, even if implemented incrementally:
 
-- `argile/src/lang/argile_ast.t`
+- `argile/src/lang/ast.t`
   - canonical AST definitions (or a renamed/normalized canonical AST module)
 - `argile/src/lang/argile.t`
   - parser -> AST
@@ -626,7 +715,7 @@ This plan is phased for execution order, but each phase is defined against the f
 - Explicit engineering rule in team notes / ADR:
   - no separate CAPI semantic/emitter path
 - Decision on canonical AST schema ownership:
-  - existing `argile_ast.t` as canonical, or
+  - existing `ast.t` as canonical, or
   - parser AST + canonical normalized AST layer
 
 ### Outputs
@@ -647,7 +736,7 @@ Produce a complete canonical AST schema that the parser and C API can both gener
 
 ### Work Items
 
-- Audit `argile/src/lang/argile_ast.t` node-by-node
+- Audit `argile/src/lang/ast.t` node-by-node
 - Classify fields:
   - portable (CAPI-safe)
   - parser-only
@@ -663,7 +752,7 @@ Produce a complete canonical AST schema that the parser and C API can both gener
 ### Deliverables
 
 - canonical AST schema section in this doc (or companion schema doc if too long)
-- updated `argile_ast.t` plan (and implementation diff if done in this phase)
+- updated `ast.t` plan (and implementation diff if done in this phase)
 - list of Terra/Lua-only extensions that remain non-portable
 
 ### Stop Gate
@@ -694,11 +783,13 @@ Make `argile/src/dsl_compiler.t` compile from a canonical AST contract independe
 
 A manually constructed Lua AST (without parser) can be compiled through the canonical compiler path for at least one scene covering components, states, and fills.
 
-## Phase 3 - C API AST Builder Core (Handles, Program, Nodes, Expressions)
+## Phase 3 - Host-Side AST Builder Core (Handles, Program, Nodes, Expressions)
 
 ### Goal
 
-Expose a handle-based C ABI for constructing canonical AST programs and expressions, without adding any duplicate semantics.
+Expose a handle-based AST builder API for constructing canonical AST programs and expressions, without adding any duplicate semantics.
+
+This phase can be implemented as a host-side API first (Lua/Terra environment) to validate the full AST contract and semantics path before any shared-library ABI constraints are imposed.
 
 ### Work Items
 
@@ -726,13 +817,14 @@ Expose a handle-based C ABI for constructing canonical AST programs and expressi
 
 ### Deliverables
 
-- `capi_dsl_ast` module with typed handles and constructors
-- generated header/FFI exports for AST builder API
+- `capi_dsl_ast` (or `dsl_ast_builder`) module with typed handles and constructors
+- host-side tests proving AST graph/lifecycle correctness
+- if exportable Terra structs/functions are used from the start, generated header/FFI exports can also be added here
 - AST builder unit tests (handles, invalidation, graph constraints)
 
 ### Stop Gate
 
-C API can construct a non-trivial AST covering:
+AST builder can construct a non-trivial AST covering:
 
 - theme + token + recipe declaration
 - component with variants and root node
@@ -741,36 +833,36 @@ C API can construct a non-trivial AST covering:
 
 No compile path required yet to pass this gate, but AST structure must be complete and validated.
 
-## Phase 4 - C API Compile Entry (Canonical Compiler Only)
+## Phase 4 - Host-Side AST Compile Entry (Canonical Compiler Only)
 
 ### Goal
 
-Compile C API-built ASTs through the canonical compiler path and remove any need for a CAPI-specific semantic path.
+Compile AST-builder-produced ASTs through the canonical compiler path and remove any need for a CAPI-specific semantic path.
 
 ### Work Items
 
-- Add `CapiDslAstCompile*` entrypoints
-- Convert internal C API AST storage to compiler-consumable AST objects (or build canonical AST directly)
+- Add host-side `CapiDslAstCompile*` (or `DslAstCompile*`) entrypoints
+- Convert internal AST-builder storage to compiler-consumable AST objects (or build canonical AST directly)
 - Route compile call into `dsl_compiler`
 - Surface compile diagnostics through C API
 - Ensure no duplicate semantic evaluation exists in C API layer
 
 ### Deliverables
 
-- exported compile entrypoints
+- host-side compile entrypoints
 - end-to-end C API AST -> canonical compiler -> executable/render path
 - compile diagnostics retrieval APIs
 
 ### Stop Gate
 
-Equivalent parser DSL and C API AST programs produce equivalent behavior for a parity scene that includes:
+Equivalent parser DSL and AST-builder programs produce equivalent behavior for a parity scene that includes:
 
 - component invoke
 - fills/slots/children
 - state overlays
 - expression-based styling
 
-## Phase 5 - Full Expression and Reference Parity
+## Phase 5 - Full Expression and Reference Parity (Host-Side AST Path)
 
 ### Goal
 
@@ -794,7 +886,7 @@ Cover the complete DSL value/expression surface required to drive all configurab
 
 No core DSL feature still requires an ad-hoc C API setter because expression support is missing.
 
-## Phase 6 - Themes, Tokens, and Recipes Full Parity
+## Phase 6 - Themes, Tokens, and Recipes Full Parity (Host-Side AST Path)
 
 ### Goal
 
@@ -818,7 +910,7 @@ Achieve full portable parity for theme/token/recipe semantics through AST and ca
 
 Parser DSL and C API AST can express and compile equivalent themed/recipe-driven scenes without a separate implementation path.
 
-## Phase 7 - Conformance Test Harness (Parser DSL vs C API AST)
+## Phase 7 - Conformance Test Harness (Parser DSL vs AST Builder)
 
 ### Goal
 
@@ -871,9 +963,35 @@ Make the C API usable for non-Terra users without forcing them to reverse-engine
 
 ### Stop Gate
 
-A non-Terra user can implement a small DSL wrapper using only docs + generated header/FFI.
+A non-Terra user can implement a small DSL wrapper using:
 
-## Phase 9 - Internal Cleanup and Deletion of Temporary Duplication
+- host-side AST/compiler API docs (for embedded Terra/Lua integrations), or
+- runtime `ui.capi` docs (for runtime-only integration), depending on the chosen integration mode.
+
+## Phase 9 - Runtime Shared-Library ABI Expansion (Optional, Future)
+
+### Goal
+
+Make more of the AST builder (and eventually AST compilation) available in the shared-library `ui.capi` without duplicating semantics.
+
+### Work Items
+
+- Define which AST builder pieces can be implemented as Terra-exportable runtime data APIs
+- Add Terra-exportable handle/storage APIs for AST/IR data where useful
+- Keep compile disabled/host-only until semantic lowering is Terra-exportable
+- If runtime compilation is required, implement Terra-exportable semantic lowering path that matches canonical semantics
+- Add parity tests between host-side compile and runtime ABI compile (if/when runtime compile exists)
+
+### Deliverables
+
+- expanded `ui.capi` AST-related ABI (data builder/storage and/or compile)
+- explicit capability flags describing what is runtime-exported vs host-only
+
+### Stop Gate
+
+No runtime ABI AST compile is shipped unless it uses canonical semantics (shared lowering) and passes parity corpus coverage.
+
+## Phase 10 - Internal Cleanup and Deletion of Temporary Duplication
 
 ### Goal
 
@@ -881,7 +999,7 @@ Guarantee the codebase does not retain parallel semantic paths.
 
 ### Work Items
 
-- Delete any temporary CAPI-side semantic helpers that duplicate compiler logic
+- Delete any temporary API-side semantic helpers that duplicate compiler logic
 - Consolidate feature flags to describe final capabilities only
 - Ensure `capi.t` exports are grouped and documented
 - Remove stale comments/docs referring to deprecated prototype paths
@@ -978,23 +1096,30 @@ The parity corpus must include explicit cases for:
 
 ## Acceptance Criteria (Definition of Done)
 
-The DSL AST C API effort is done when all of the following are true:
+The project-level DSL AST API effort is done when all of the following are true:
 
-- Non-Terra users can build Argile AST programs via handle-based C API
-- C API-built ASTs compile through the same canonical compiler path as parser-produced ASTs
-- Parser DSL and C API AST are behaviorally equivalent across the parity corpus
+- Host-side AST builder APIs can build Argile AST programs (full portable surface)
+- AST-builder-produced ASTs compile through the same canonical compiler path as parser-produced ASTs
+- Parser DSL and AST-builder AST are behaviorally equivalent across the parity corpus
 - Themes/tokens/recipes/components/variants/states/`use(...)` portable semantics are supported
-- Diagnostics are available and actionable through C API
-- No duplicate CAPI-only semantic engine exists in the codebase
+- Diagnostics are available and actionable through the AST builder/compile API
+- No duplicate API-only semantic engine exists in the codebase
 - Documentation is sufficient for a bindings author to build a host-language DSL wrapper
+
+### Additional Acceptance Criteria for Runtime Shared-Library ABI (If Pursued)
+
+- `ui.capi` exposes only Terra-exportable functions/structs/constants
+- Any AST-related runtime ABI capability is explicitly feature-flagged
+- If runtime ABI AST compilation exists, it uses canonical/shared semantics and passes parity corpus tests
 
 ## Open Questions (To Resolve Early, Not Leave Implicit)
 
 These questions must be answered during Phase 1/2, not deferred indefinitely:
 
-- Is `argile/src/lang/argile_ast.t` directly usable as canonical AST, or do we need a normalized AST layer?
+- Is `argile/src/lang/ast.t` directly usable as canonical AST, or do we need a normalized AST layer?
 - Which current DSL features depend on Lua/Terra-only constructs and need explicit portable boundaries?
-- What exact compile artifact should `CapiDslAstCompile*` return/expose for non-Terra callers?
+- What exact compile artifact should host-side `CapiDslAstCompile*` return/expose for non-Terra callers embedding Terra/Lua?
+- Is runtime shared-library AST compilation actually required for project goals, or is host-side compile + runtime `ui.capi` sufficient?
 - How much source metadata should the C API support for third-party DSL parsers?
 - What compiler state must become explicit to support reentrant compilation from C API?
 
@@ -1002,15 +1127,22 @@ These questions must be answered during Phase 1/2, not deferred indefinitely:
 
 These are not "minimal" completion criteria. They are the first implementation steps under the full architecture.
 
-1. Commit this document.
-2. Perform Phase 1 AST schema audit in code (not just prose).
-3. Refactor compiler input contract (Phase 2) before adding AST C API feature breadth.
-4. Only then start `CapiDslAst*` handle-based AST builder implementation.
+1. Commit this document update.
+2. Continue Phase 1/2 canonical AST + compiler refactors (already started) until the AST contract is fully explicit.
+3. Implement host-side handle-based `CapiDslAst*` (or `DslAst*`) builder on top of `lang/ast.t`.
+4. Add host-side compile entrypoints that call `dsl_compiler`.
+5. Only then decide which AST builder portions should be exported through `ui.capi` in Terra-exportable form.
 
 ## Summary
 
-The correct C API for Argile DSL is a handle-based AST builder and compile API that feeds the canonical Argile compiler path.
+The correct Argile DSL API architecture is AST-first and semantics-canonical.
 
-Bindings users should be able to recreate DSL ergonomics in their own languages on top of this low-level AST C API.
+That means:
 
-The implementation plan in this document is deliberately full-scope and explicit so the team does not repeat the pattern of building a fast side path that later becomes a maintenance burden.
+- host-side AST builder + compiler APIs for full language power today
+- runtime shared-library `ui.capi` for stable runtime bindings today
+- no duplicate semantic engines in either path
+
+Bindings users should be able to recreate DSL ergonomics in their own languages on top of low-level AST APIs (host-side first, runtime ABI later if implemented).
+
+The implementation plan in this document is deliberately full-scope and explicit so the team does not repeat the pattern of building a fast side path that later becomes a maintenance burden, while also respecting Terra's real export/runtime boundaries.

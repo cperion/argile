@@ -10,7 +10,7 @@ local C = terralib.includecstring[[
     #include <string.h>
 ]]
 
-local AST = require("src/lang/argile_ast")
+local AST = require("src/lang/ast")
 
 -- Test AST construction
 print("Testing AST construction...")
