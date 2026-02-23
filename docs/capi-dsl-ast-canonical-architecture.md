@@ -6,6 +6,11 @@
 - Reoriented after confirming `terralib.saveobj` export constraints:
   - shared-library `ui.capi` can export Terra functions only
   - the current Lua/Terra metaprogramming compiler cannot be exported directly
+- Chosen shipping strategy (current):
+  - Option 1 compiler-host architecture (canonical compiler reused, compile-on-change + cache)
+  - packaged as one `libargile.so` with two API families:
+    - Terra-exported runtime ABI (`ui.capi`)
+    - host compiler ABI (embedded Lua/Terra compiler context)
 - Canonical-path work implemented so far (host-side):
   - canonical AST module and compiler seam (`src/lang/ast.t`, `compileAstProgram*`)
   - parser/AST/compiler refactors to reduce parser-closure leakage (structured AST expressions for token/path/call cases)
@@ -200,6 +205,25 @@ Properties:
 - no direct calls into plain Lua compiler functions
 - no duplicate DSL semantics
 
+### Chosen Shipping Form (One `.so`, Two API Families)
+
+The current preferred shipping model is a single shared library artifact with two API families inside it:
+
+- Runtime ABI family (`ui.capi` semantics):
+  - Terra-exported runtime/layout/render/input APIs
+- Compiler-host ABI family:
+  - C ABI implemented by an embedded compiler host
+  - owns a `lua_State` + Terra initialization (`terra_init`)
+  - calls canonical host-side modules (`dsl_compiler`, parser/AST helpers as needed)
+  - maintains compile caches and compiler contexts
+
+This preserves the execution-phase boundary while avoiding a two-`.so` deployment requirement.
+
+Important:
+
+- this does **not** make the current `dsl_compiler` a `ui.capi` Terra export
+- this does **not** remove `saveobj` export restrictions on plain Lua functions
+
 ### Long-Term Convergence Goal
 
 If the project later needs runtime shared-library AST compilation for non-Terra hosts, the semantic lowering/compiler path must be moved (or duplicated at the backend level only) into Terra-exportable/runtime-compatible code while keeping semantics shared.
@@ -229,6 +253,9 @@ Present:
 
 - Host-side AST -> canonical compiler -> Terra quote/runtime emission
 - Runtime `ui.capi` -> runtime engine APIs (layout/render/input)
+- One-`.so` packaging may contain both:
+  - runtime ABI exports (Terra)
+  - compiler-host exports (C shim / host ABI)
 
 Future (optional, if needed):
 
@@ -564,6 +591,12 @@ The current `dsl_compiler` is host-side Lua/Terra metaprogramming code and canno
 
 Therefore, `CapiDslAstCompile*` in the near term should be implemented as host-side API entrypoints (Lua/Terra environment), not as `saveobj` shared-library exports.
 
+If shipped in one `libargile.so`, these host compile entrypoints should still be exposed as a separate compiler-host ABI family, not merged into `ui.capi`.
+
+### Callback Bridge Fallback (Not Canonical)
+
+Calling host Lua compiler logic from Terra/runtime code via function-pointer callbacks is possible, but slower and harder to reason about. It may be used as a tooling/debug fallback, but it is not the primary architecture and must not replace the canonical host compiler path or justify a duplicate semantic engine.
+
 ## No Separate Semantic Path
 
 The C API compile implementation must not:
@@ -733,6 +766,14 @@ This is important for bindings that implement their own DSL/parser.
 If `dsl_compiler.t` currently relies on shared module state (registries, parse-time globals), refactor it so AST compile entrypoints are explicit about compiler environment and registry inputs.
 
 Concurrency support can be phased, but non-reentrant global singleton design should not be baked into the AST C API.
+
+For the chosen embedded compiler-host strategy (Option 1):
+
+- compiler contexts should be explicit handles, not hidden globals
+- each compiler context should own (or serialize access to) a Lua/Terra state
+- a long-lived compiler state is recommended to keep caches warm
+- runtime UI contexts and compiler contexts should remain independent objects
+- cross-thread compilation must use explicit locking or separate compiler contexts
 
 ## ABI Stability and Versioning
 
@@ -1055,6 +1096,8 @@ A non-Terra user can implement a small DSL wrapper using:
 
 Make more of the AST builder (and eventually AST compilation) available in the shared-library `ui.capi` without duplicating semantics.
 
+This phase is optional relative to the current shipping strategy. The project can ship full language support for bindings via the embedded compiler-host ABI + compile cache without runtime `ui.capi` AST compilation.
+
 ### Work Items
 
 - Define which AST builder pieces can be implemented as Terra-exportable runtime data APIs
@@ -1212,7 +1255,8 @@ These are not "minimal" completion criteria. They are the first implementation s
 2. Continue Phase 1/2 canonical AST + compiler refactors (already started) until the AST contract is fully explicit.
 3. Implement host-side handle-based `CapiDslAst*` (or `DslAst*`) builder on top of `lang/ast.t`.
 4. Add host-side compile entrypoints that call `dsl_compiler`.
-5. Only then decide which AST builder portions should be exported through `ui.capi` in Terra-exportable form.
+5. Define and implement the embedded compiler-host ABI (same `libargile.so`, separate API family) with explicit compiler contexts and compile caching.
+6. Only then decide which AST builder portions should be exported through `ui.capi` in Terra-exportable form.
 
 ## Summary
 

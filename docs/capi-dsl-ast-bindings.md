@@ -24,6 +24,24 @@ The architecture still remains canonical:
 
 No duplicate semantics are implemented in the AST host API.
 
+## Chosen Shipping Strategy (Current)
+
+For official bindings (including LuaJIT FFI), the recommended near-term shipping model is:
+
+- one `libargile.so`
+- two API families inside that library:
+  - runtime ABI (`ui.capi` style runtime/layout/render/input APIs)
+  - compiler-host ABI (embedded Lua/Terra compiler contexts calling canonical `dsl_compiler`)
+- compile-on-change with cache (not compile every frame)
+
+This keeps one artifact for users while preserving the real execution-phase boundary.
+
+Important:
+
+- the compiler-host ABI is not the same thing as `ui.capi`
+- the current canonical compiler is not directly exportable through Terra `saveobj`
+- runtime AST compilation inside Terra-exported `ui.capi` remains a future option only if semantic lowering becomes Terra-exportable
+
 ## Where to Get the API
 
 ```lua
@@ -396,6 +414,7 @@ Build a small wrapper in your host language that:
 3. Attaches source metadata if you have your own parser
 4. Compiles via `CapiDslAstCompileProgram*`
 5. Treats builder lifetime as a compilation session boundary
+6. Uses a compile cache keyed by AST + compiler options + environment signature
 
 See:
 
@@ -407,13 +426,63 @@ See:
 
 Use the host AST API + canonical compiler + runtime APIs in one process.
 
+This is the recommended semantic baseline and the easiest way to validate wrapper parity.
+
+### A2. One-`.so` Hybrid (Recommended Shipping Form for LuaJIT FFI)
+
+Ship one `libargile.so` that contains:
+
+- runtime ABI exports (Terra `saveobj` exports; `ui.capi` family)
+- compiler-host ABI exports (C shim embedding Lua/Terra and invoking canonical compiler)
+
+Recommended behavior:
+
+- create a long-lived compiler context
+- compile on startup / source change / theme change
+- cache compiled artifacts
+- execute compiled artifacts via runtime APIs each frame
+
+This avoids per-frame compile cost while preserving canonical semantics.
+
 ### B. Runtime Shared Library (`ui.capi`) Only (Available Today)
 
 Use runtime layout/render/input APIs only. AST compilation is not exported there yet.
 
+This mode is runtime-only. If your wrapper wants DSL/AST compilation, you need the host compiler API surface (embedded host or one-`.so` hybrid compiler-host ABI).
+
 ### C. Future Runtime ABI AST Builder/Compile (Optional)
 
 If Argile later adds Terra-exportable semantic lowering, parts of AST build/compile may move into `ui.capi` with capability flags. Until then, do not assume AST compilation exists in the shared library ABI.
+
+## Compile Cache Guidance (Recommended)
+
+Immediate-mode UI does not require recompilation every frame. Compile only when inputs change.
+
+Cache compiled artifacts using a key that includes at least:
+
+- canonical AST content hash
+- compiler options
+- theme/token inputs that affect compile-time behavior
+- Argile/compiler version
+- runtime ABI version (if compile artifact depends on it)
+
+Recommended runtime behavior:
+
+- keep previous compiled artifact active while recompiling a new version
+- swap on successful compile
+- surface diagnostics without tearing down the running UI
+
+## Callback Bridge to Host Compiler (Fallback Only)
+
+Terra can call Lua through cast function pointers, but this is slower and not the recommended primary architecture.
+
+Use a callback bridge only for:
+
+- development tooling
+- hot-reload experiments
+- debugging fallback paths
+
+Do not treat callback-based compile as the canonical or performance-sensitive path.
 
 ## Testing Guidance for Wrapper Authors
 
