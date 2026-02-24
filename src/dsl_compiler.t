@@ -32,6 +32,16 @@ local function is_terra_node(v)
     return terralib.isquote(v) or terralib.issymbol(v)
 end
 
+local function terra_value_type(v)
+    if terralib.issymbol(v) then
+        return v.type
+    end
+    if type(v) == "table" and v.gettype then
+        return v:gettype()
+    end
+    return nil
+end
+
 local function deep_copy(t)
     if not is_table(t) then return t end
     local copy = {}
@@ -1088,10 +1098,17 @@ compile_dsl_node = function(dsl_node, env_fn, registry, fills_by_slot, inherited
     local elem_id_var = nil
     local id_value = dsl_node.id_expr and AST.EvalExpr(dsl_node.id_expr, env_fn) or nil
     
-    if not is_text then
-        if id_value then
-            if type(id_value) == "string" then
-                elem_id_var = symbol(ui.ElementId, "elem_id")
+    local function emit_id_init_and_maybe_open(open_element)
+        if id_value == nil then
+            if open_element then
+                stmts:insert(quote ui.OpenElement() end)
+            end
+            return
+        end
+
+        if type(id_value) == "string" then
+            elem_id_var = symbol(ui.ElementId, "elem_id")
+            if open_element then
                 stmts:insert(quote
                     var id_str = ui.String {
                         isStaticallyAllocated = true,
@@ -1101,23 +1118,52 @@ compile_dsl_node = function(dsl_node, env_fn, registry, fills_by_slot, inherited
                     var [elem_id_var] = ui.GetElementId(id_str)
                     ui.OpenElementWithId([elem_id_var])
                 end)
-            elseif type(id_value) == "number" then
-                elem_id_var = symbol(ui.ElementId, "elem_id")
+            else
+                stmts:insert(quote
+                    var id_str = ui.String {
+                        isStaticallyAllocated = true,
+                        length = [#id_value],
+                        chars = [id_value]
+                    }
+                    var [elem_id_var] = ui.GetElementId(id_str)
+                end)
+            end
+            return
+        end
+
+        if type(id_value) == "number" then
+            elem_id_var = symbol(ui.ElementId, "elem_id")
+            if open_element then
                 stmts:insert(quote
                     var [elem_id_var] = ui.HashNumber([id_value], 0)
                     ui.OpenElementWithId([elem_id_var])
                 end)
-            elseif type(id_value) == "table" and id_value.gettype then
-                local t = id_value:gettype()
-                elem_id_var = symbol(ui.ElementId, "elem_id")
-                
-                if t:isintegral() then
+            else
+                stmts:insert(quote
+                    var [elem_id_var] = ui.HashNumber([id_value], 0)
+                end)
+            end
+            return
+        end
+
+        local t = terra_value_type(id_value)
+        if t ~= nil then
+            elem_id_var = symbol(ui.ElementId, "elem_id")
+
+            if t:isintegral() then
+                if open_element then
                     stmts:insert(quote
                         var [elem_id_var] = ui.HashNumber([id_value], 0)
                         ui.OpenElementWithId([elem_id_var])
                     end)
-                elseif t == rawstring or t == &int8 then
-                    local C = terralib.includec("string.h")
+                else
+                    stmts:insert(quote
+                        var [elem_id_var] = ui.HashNumber([id_value], 0)
+                    end)
+                end
+            elseif t == rawstring or t == &int8 then
+                local C = terralib.includec("string.h")
+                if open_element then
                     stmts:insert(quote
                         var str_val = [id_value]
                         var id_str = ui.String {
@@ -1128,21 +1174,40 @@ compile_dsl_node = function(dsl_node, env_fn, registry, fills_by_slot, inherited
                         var [elem_id_var] = ui.GetElementId(id_str)
                         ui.OpenElementWithId([elem_id_var])
                     end)
-                elseif t == ui.ElementId then
+                else
+                    stmts:insert(quote
+                        var str_val = [id_value]
+                        var id_str = ui.String {
+                            isStaticallyAllocated = false,
+                            length = C.strlen(str_val),
+                            chars = str_val
+                        }
+                        var [elem_id_var] = ui.GetElementId(id_str)
+                    end)
+                end
+            elseif t == ui.ElementId then
+                if open_element then
                     stmts:insert(quote
                         var [elem_id_var] = [id_value]
                         ui.OpenElementWithId([elem_id_var])
                     end)
                 else
-                    error("argile: Unsupported dynamic ID type: " .. tostring(t))
+                    stmts:insert(quote
+                        var [elem_id_var] = [id_value]
+                    end)
                 end
             else
-                stmts:insert(quote ui.OpenElement() end)
+                error("argile: Unsupported dynamic ID type: " .. tostring(t))
             end
-        else
+            return
+        end
+
+        if open_element then
             stmts:insert(quote ui.OpenElement() end)
         end
     end
+
+    emit_id_init_and_maybe_open(not is_text)
     
     local has_runtime_state_overlays = #runtime_state_names > 0 and (elem_id_var ~= nil)
     
@@ -1229,48 +1294,94 @@ compile_dsl_node = function(dsl_node, env_fn, registry, fills_by_slot, inherited
                     local combo = state_combos[mask]
                     local branch = terralib.newlist()
                     if combo.text_config then
-                        branch:insert(quote
-                            var txt_cfg = [compileTextConfig(combo.text_config)]
-                            var txt_cfg_ptr = ui.GetCurrentContext():storeTextConfig(txt_cfg)
-                            ui.OpenTextElementWithLength([text_value], [#text_value], txt_cfg_ptr)
-                        end)
+                        if elem_id_var then
+                            branch:insert(quote
+                                var txt_cfg = [compileTextConfig(combo.text_config)]
+                                var txt_cfg_ptr = ui.GetCurrentContext():storeTextConfig(txt_cfg)
+                                ui.OpenTextElementWithLengthAndId([elem_id_var], [text_value], [#text_value], txt_cfg_ptr)
+                            end)
+                        else
+                            branch:insert(quote
+                                var txt_cfg = [compileTextConfig(combo.text_config)]
+                                var txt_cfg_ptr = ui.GetCurrentContext():storeTextConfig(txt_cfg)
+                                ui.OpenTextElementWithLength([text_value], [#text_value], txt_cfg_ptr)
+                            end)
+                        end
                     else
-                        branch:insert(quote
-                            ui.OpenTextElementWithLength([text_value], [#text_value], nil)
-                        end)
+                        if elem_id_var then
+                            branch:insert(quote
+                                ui.OpenTextElementWithLengthAndId([elem_id_var], [text_value], [#text_value], nil)
+                            end)
+                        else
+                            branch:insert(quote
+                                ui.OpenTextElementWithLength([text_value], [#text_value], nil)
+                            end)
+                        end
                     end
                     return branch
                 end)
                 if text_dispatch then stmts:insert(text_dispatch) end
             else
                 if textConfig then
-                    stmts:insert(quote
-                        var txt_cfg = [compileTextConfig(textConfig)]
-                        var txt_cfg_ptr = ui.GetCurrentContext():storeTextConfig(txt_cfg)
-                        ui.OpenTextElementWithLength([text_value], [#text_value], txt_cfg_ptr)
-                    end)
+                    if elem_id_var then
+                        stmts:insert(quote
+                            var txt_cfg = [compileTextConfig(textConfig)]
+                            var txt_cfg_ptr = ui.GetCurrentContext():storeTextConfig(txt_cfg)
+                            ui.OpenTextElementWithLengthAndId([elem_id_var], [text_value], [#text_value], txt_cfg_ptr)
+                        end)
+                    else
+                        stmts:insert(quote
+                            var txt_cfg = [compileTextConfig(textConfig)]
+                            var txt_cfg_ptr = ui.GetCurrentContext():storeTextConfig(txt_cfg)
+                            ui.OpenTextElementWithLength([text_value], [#text_value], txt_cfg_ptr)
+                        end)
+                    end
                 else
-                    stmts:insert(quote
-                        ui.OpenTextElementWithLength([text_value], [#text_value], nil)
-                    end)
+                    if elem_id_var then
+                        stmts:insert(quote
+                            ui.OpenTextElementWithLengthAndId([elem_id_var], [text_value], [#text_value], nil)
+                        end)
+                    else
+                        stmts:insert(quote
+                            ui.OpenTextElementWithLength([text_value], [#text_value], nil)
+                        end)
+                    end
                 end
             end
         else
             local C = terralib.includec("string.h")
             if textConfig then
-                stmts:insert(quote
-                    var txt_cfg = [compileTextConfig(textConfig)]
-                    var txt_cfg_ptr = ui.GetCurrentContext():storeTextConfig(txt_cfg)
-                    var runtime_str : rawstring = [text_value]
-                    var runtime_len = C.strlen(runtime_str)
-                    ui.OpenTextElementWithLength(runtime_str, runtime_len, txt_cfg_ptr)
-                end)
+                if elem_id_var then
+                    stmts:insert(quote
+                        var txt_cfg = [compileTextConfig(textConfig)]
+                        var txt_cfg_ptr = ui.GetCurrentContext():storeTextConfig(txt_cfg)
+                        var runtime_str : rawstring = [text_value]
+                        var runtime_len = C.strlen(runtime_str)
+                        ui.OpenTextElementWithLengthAndId([elem_id_var], runtime_str, runtime_len, txt_cfg_ptr)
+                    end)
+                else
+                    stmts:insert(quote
+                        var txt_cfg = [compileTextConfig(textConfig)]
+                        var txt_cfg_ptr = ui.GetCurrentContext():storeTextConfig(txt_cfg)
+                        var runtime_str : rawstring = [text_value]
+                        var runtime_len = C.strlen(runtime_str)
+                        ui.OpenTextElementWithLength(runtime_str, runtime_len, txt_cfg_ptr)
+                    end)
+                end
             else
-                stmts:insert(quote
-                    var runtime_str : rawstring = [text_value]
-                    var runtime_len = C.strlen(runtime_str)
-                    ui.OpenTextElementWithLength(runtime_str, runtime_len, nil)
-                end)
+                if elem_id_var then
+                    stmts:insert(quote
+                        var runtime_str : rawstring = [text_value]
+                        var runtime_len = C.strlen(runtime_str)
+                        ui.OpenTextElementWithLengthAndId([elem_id_var], runtime_str, runtime_len, nil)
+                    end)
+                else
+                    stmts:insert(quote
+                        var runtime_str : rawstring = [text_value]
+                        var runtime_len = C.strlen(runtime_str)
+                        ui.OpenTextElementWithLength(runtime_str, runtime_len, nil)
+                    end)
+                end
             end
         end
     end
