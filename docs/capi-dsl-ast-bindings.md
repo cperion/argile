@@ -53,7 +53,7 @@ Repository reference implementation (LuaJIT):
 - `bindings/luajit/argile_lj/compiler.lua` (host compiler export detection / boundary reporting)
 - `bindings/luajit/README.md` (package-level guide)
 - `tools/experiment_luajit_ffi_surface_probe.lua` (runtime + callback + AST/DSL probe)
-- `backends/love2d/demo_ffi/` (reference app integration using the official LuaJIT binding)
+- `argile-ui/platforms/love2d/luajit/demo_ffi/` (reference app integration using the official LuaJIT binding)
 
 Important:
 

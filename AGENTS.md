@@ -6,7 +6,7 @@ Argile ports `ref/clay.h` into a Terra-native UI library with parity tests and L
 - `tests/`: foundation, layout, compiler/AST, and regression coverage.
 - `bench/`: Clay-vs-Argile benchmark harness.
 - `bindings/`: official language bindings (LuaJIT reference integration lives in `bindings/luajit/`).
-- `backends/`: backend integrations and reference demos (including Love2D FFI demo and SDL/raylib backends).
+- `render/`: backend-neutral render-command dispatch helpers used by downstream platform integrations.
 - `tools/`: build scripts (`build_argile.t`, `build_bench.sh`, `build_terra.t`) and benchmark backends.
 - `docs/`: architecture, bindings, design notes, and Terra references (`docs/terra/*`).
 - `ref/clay.h`: source-of-truth behavior reference.
@@ -19,7 +19,7 @@ Default workflow:
 - `make bench`, `make bench-quick`, `make bench-stress`: run benchmark profiles.
 - `make build-parity`: build Argile/Clay parity libraries + FFI bindings.
 - `make parity`, `make parity-quick`, `make parity-stress`: run tolerance-based layout parity checks.
-- `make love-demo`: run the Love2D demo.
+- Platform demos now live in the sibling `argile-ui` repository (`platforms/*`).
 - `luajit tools/experiment_luajit_ffi_surface_probe.lua`: probe official LuaJIT runtime/AST DSL integration against `libargile.so`.
 - `rg "pattern" src tests tools`: fast code search.
 

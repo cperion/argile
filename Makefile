@@ -4,7 +4,7 @@ TERRA ?= terra
 LUAJIT ?= luajit
 CC ?= cc
 
-.PHONY: all build build-argile build-bench build-parity love-demo love-demo-portable raylib-demo sdl3-demo test bench bench-quick bench-heavy bench-stress parity parity-quick parity-heavy parity-stress clean
+.PHONY: all build build-argile build-bench build-parity test bench bench-quick bench-heavy bench-stress parity parity-quick parity-heavy parity-stress clean
 
 all: build
 
@@ -21,20 +21,6 @@ build-bench:
 build-parity:
 	@mkdir -p build
 	./tools/build_parity.sh
-
-love-demo: build
-	love backends/love2d/demo_ffi
-
-love-demo-portable: build
-	love backends/love2d/demo
-
-raylib-demo: build
-	@echo "Note: Raylib demo may crash on Wayland (GLFW limitation). Use X11 or see backends/raylib/README.md"
-	./backends/raylib/build.sh
-
-sdl3-demo: build
-	@echo "SDL3 demo with native Wayland support"
-	./backends/sdl3/build.sh
 
 test:
 	$(TERRA) tests/test_foundation.t

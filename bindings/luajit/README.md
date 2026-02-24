@@ -50,7 +50,7 @@ This defines the compatibility contract for:
 - Text measurement cache behavior (callback miss/hit/reset) via FFI
 - Layout inspection helpers (`GetElementData`) and debug mode toggles through the runtime wrapper
 - Canonical AST reuse and LuaJIT AST/DSL construction (host-language frontend side)
-- LÖVE2D reference integration through the official binding (`backends/love2d/demo_ffi`)
+- LÖVE2D reference integration through the official binding (`argile-ui/platforms/love2d/luajit/demo_ffi`)
 
 ## What Is Not Available From `ui.capi` Today
 

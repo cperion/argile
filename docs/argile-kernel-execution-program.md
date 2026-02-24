@@ -101,13 +101,13 @@ Primary files:
 - `bindings/luajit/argile_lj/init.lua`
 - `bindings/luajit/README.md`
 
-### WS-C: Backends + Reference Demos (`argile/backends/*`)
+### WS-C: Platform Integrations + Reference Demos (`argile-ui/platforms/*`)
 
 Primary files:
-- `backends/love2d/renderer.lua`
-- `backends/love2d/demo_ffi/main.lua`
-- `backends/sdl3/*`
-- `backends/raylib/*`
+- `argile-ui/platforms/love2d/luajit/renderer.lua`
+- `argile-ui/platforms/love2d/luajit/demo_ffi/main.lua`
+- `argile-ui/platforms/sdl3/terra/*`
+- `argile-ui/platforms/raylib/terra/*`
 
 ### WS-D: Toolkit + Widget Ergonomics (`argile-ui` root repo)
 
@@ -121,7 +121,7 @@ Primary files:
 
 Primary files (likely):
 - `tests/test_*.t` in `argile/`
-- backend-specific demos/scenes
+- platform-specific demos/scenes
 - new conformance scenes in `argile/examples/scenes/`
 
 ## Milestone Breakdown
@@ -450,11 +450,11 @@ Files:
 Acceptance:
 - LuaJIT host code can declare overflow/scroll behavior without raw FFI
 
-#### K1-041: Love2D demo integration for scroll panel (engine demo)
+#### K1-041: Love2D platform demo integration for scroll panel
 
 Files:
-- `backends/love2d/demo_ffi/main.lua`
-- optionally `backends/love2d/renderer.lua` (if scissor issues are found)
+- `argile-ui/platforms/love2d/luajit/demo_ffi/main.lua`
+- optionally `argile-ui/platforms/love2d/luajit/renderer.lua` (if scissor issues are found)
 
 Acceptance:
 - demo contains a real scrollable area
@@ -591,7 +591,7 @@ Scope:
 - reusable helper in backend code or demo utility
 
 Files:
-- `backends/love2d/renderer.lua` or `backends/love2d/demo_ffi/main.lua`
+- `argile-ui/platforms/love2d/luajit/renderer.lua` or `argile-ui/platforms/love2d/luajit/demo_ffi/main.lua`
 
 Acceptance:
 - maintainers can inspect boxes/clips quickly during future feature work
@@ -701,7 +701,7 @@ Candidate uses:
 
 Files:
 - `platforms/love2d/luajit/demo_widgets/main.lua` (argile-ui root)
-- optionally `backends/love2d/demo_ffi/main.lua` (engine demo)
+- optionally `argile-ui/platforms/love2d/luajit/demo_ffi/main.lua` (platform demo)
 
 Acceptance:
 - demo showcases wrap behavior at multiple widths
@@ -968,7 +968,7 @@ Commands (typical):
 
 Keep at least one engine-level and one toolkit-level demo current:
 
-- `argile/backends/love2d/demo_ffi/` (engine integration reference)
+- `argile-ui/platforms/love2d/luajit/demo_ffi/` (engine integration reference)
 - `argile-ui/platforms/love2d/luajit/demo_widgets/` (toolkit ergonomics proving ground)
 
 ### X4: Regression Capture Discipline

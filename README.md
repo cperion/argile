@@ -12,7 +12,7 @@ The repository includes:
 - canonical DSL parser/compiler/AST and host-side AST/compiler APIs (`src/lang/*`, `src/dsl_*`, `src/capi_dsl_*`)
 - parity and regression tests (`tests/`)
 - official language bindings (LuaJIT reference integration in `bindings/luajit/`)
-- backend integrations and reference demos (`backends/`, including Love2D FFI demo)
+- backend-neutral render command dispatch support (`render/`)
 - LuaJIT benchmark suite against Clay (`bench/`)
 
 ## Requirements
@@ -20,7 +20,7 @@ The repository includes:
 - Terra
 - LuaJIT (for benchmarks/demo)
 - C toolchain (`cc`) for Clay benchmark backend
-- Love2D (optional, for `make love-demo`)
+- Platform demos/integrations now live in the sibling `argile-ui` repository (optional runtime deps vary by platform)
 
 ## Quick Start
 
@@ -55,13 +55,14 @@ make parity-stress
 
 This compares per-element layout boxes (by ID) between `build/libargile_parity.so` and `build/libclay_parity.so` using tolerance-based geometry checks, then prints a full scenario comparison table and mismatch diagnostics.
 
-## Love2D Demo
+## Platform Demos (Moved to `argile-ui`)
 
 ```bash
-make love-demo
+cd ../argile-ui
+make demo-love-platform-ffi
 ```
 
-The Love2D FFI demo lives in `backends/love2d/demo_ffi/` and uses the main Argile library (`libargile.so`) plus the official LuaJIT reference binding (`bindings/luajit/argile_lj`), not a special demo backend.
+Platform integrations and demos (LÖVE2D, SDL3, raylib, widget-layer examples) now live in `argile-ui/platforms/*` so Argile stays focused on portable render commands and the engine C API.
 
 ## API Surface
 
@@ -77,7 +78,7 @@ The Love2D FFI demo lives in `backends/love2d/demo_ffi/` and uses the main Argil
 - `src/lang/argile.t`, `src/lang/ast.t`: canonical parser and AST definitions.
 - `src/capi_dsl_ast.t`, `src/capi_dsl_compile.t`, `src/capi_dsl_host*.t`: host-side AST/compiler APIs for bindings/tooling.
 - `bindings/luajit/`: official LuaJIT runtime + AST/DSL reference integration.
-- `backends/love2d/demo_ffi/`: LuaJIT FFI authoring demo using `libargile.so`.
+- `render/dispatcher.lua`: backend-neutral render-command dispatcher helper used by platform sinks.
 - `tools/build_argile.t`: builds shared library and generates LuaJIT `ffi.cdef`.
 - `tools/build_bench.sh`: builds benchmark backends.
 - `tools/build_parity.sh`: builds parity backends and generated parity FFI cdefs.
