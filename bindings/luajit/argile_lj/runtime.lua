@@ -122,6 +122,23 @@ function M:mk_text_config(opts)
     return tc
 end
 
+function M:mk_overflow_config(opts)
+    opts = opts or {}
+    local lib = self.lib
+
+    local function resolve_mode(v)
+        if type(v) == "number" then return v end
+        if v == "clip" then return lib.OVERFLOW_CLIP or 1 end
+        if v == "scroll" then return lib.OVERFLOW_SCROLL or 2 end
+        return lib.OVERFLOW_VISIBLE or 0
+    end
+
+    return ffi.new("struct OverflowConfig", {
+        xMode = resolve_mode(opts.xMode or opts.x or opts.overflow_x),
+        yMode = resolve_mode(opts.yMode or opts.y or opts.overflow_y),
+    })
+end
+
 function M:create_context(opts)
     opts = opts or {}
     local lib = self.lib
@@ -195,6 +212,26 @@ function M.Context:get_element_data(id_or_name)
     end
     self:set_current()
     return element_data_to_table(self.lib.GetElementData(id))
+end
+
+function M.Context:attach_overflow_config(cfg_or_opts)
+    local cfg = cfg_or_opts
+    if type(cfg_or_opts) ~= "cdata" then
+        cfg = M.mk_overflow_config(self, cfg_or_opts or {})
+    end
+    self:set_current()
+    if has_symbol(self.lib, "AttachOverflowConfigForContext") then
+        return to_bool(self.lib.AttachOverflowConfigForContext(self.ctx, cfg))
+    end
+
+    -- Back-compat fallback for older libs: map overflow modes to ClipConfig.
+    local visible = self.lib.OVERFLOW_VISIBLE or 0
+    local clip_cfg = ffi.new("struct ClipConfig", {
+        horizontal = tonumber(cfg.xMode) ~= visible,
+        vertical = tonumber(cfg.yMode) ~= visible,
+        childOffset = ffi.new("struct Vector2", { x = 0, y = 0 }),
+    })
+    return to_bool(self.lib.AttachClipConfigForContext(self.ctx, clip_cfg))
 end
 
 function M.Context:set_measure_text(fn, user_data)

@@ -66,6 +66,8 @@ function M.build(ui)
     AttachBorderConfigForContext = ui.AttachBorderConfigForContext,
     AttachClipConfig = ui.AttachClipConfig,
     AttachClipConfigForContext = ui.AttachClipConfigForContext,
+    AttachOverflowConfig = ui.AttachOverflowConfig,
+    AttachOverflowConfigForContext = ui.AttachOverflowConfigForContext,
     AttachFloatingConfig = ui.AttachFloatingConfig,
     AttachFloatingConfigForContext = ui.AttachFloatingConfigForContext,
     AttachAspectRatioConfig = ui.AttachAspectRatioConfig,

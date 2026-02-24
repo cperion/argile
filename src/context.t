@@ -1436,6 +1436,24 @@ terra ui.AttachClipConfig(cfg: config.ClipConfig) : bool
     return ui.AttachClipConfigForContext(ui.GetCurrentContext(), cfg)
 end
 
+terra ui.AttachOverflowConfigForContext(ctx: &ui.Context, cfg: config.OverflowConfig) : bool
+    -- M1 groundwork: route overflow container declarations through the existing
+    -- ClipConfig pipeline. `OVERFLOW_CLIP` and `OVERFLOW_SCROLL` both enable
+    -- clipping on the corresponding axis; scroll behavior remains managed by the
+    -- existing scroll container/update APIs until dedicated overflow/scroll state
+    -- APIs land.
+    var clipCfg: config.ClipConfig
+    clipCfg.horizontal = cfg.xMode ~= config.OVERFLOW_VISIBLE
+    clipCfg.vertical = cfg.yMode ~= config.OVERFLOW_VISIBLE
+    clipCfg.childOffset.x = 0
+    clipCfg.childOffset.y = 0
+    return ui.AttachClipConfigForContext(ctx, clipCfg)
+end
+
+terra ui.AttachOverflowConfig(cfg: config.OverflowConfig) : bool
+    return ui.AttachOverflowConfigForContext(ui.GetCurrentContext(), cfg)
+end
+
 terra ui.AttachFloatingConfigForContext(ctx: &ui.Context, cfg: config.FloatingConfig) : bool
     if ctx == nil then return false end
     var floatingCfg = ctx:storeFloatingConfig(cfg)

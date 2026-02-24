@@ -64,6 +64,11 @@ ui.ClipToElement = uint8
 ui.CLIP_NONE = 0
 ui.CLIP_ATTACHED_PARENT = 1
 
+ui.OverflowMode = uint8
+ui.OVERFLOW_VISIBLE = 0
+ui.OVERFLOW_CLIP = 1
+ui.OVERFLOW_SCROLL = 2
+
 ui.RenderCommandType = uint8
 ui.RENDER_NONE = 0
 ui.RENDER_RECTANGLE = 1
@@ -226,6 +231,11 @@ ui.ClipConfig = struct {
     horizontal : bool,
     vertical : bool,
     childOffset : ui.Vector2
+}
+
+ui.OverflowConfig = struct {
+    xMode : ui.OverflowMode,
+    yMode : ui.OverflowMode
 }
 
 ui.BorderWidth = struct {

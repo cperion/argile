@@ -1496,6 +1496,40 @@ terra test_api_coverage_smoke()
     ui.CloseElement()
     ui.EndLayout()
 
+    -- Basic overflow API surface smoke (maps to clip semantics in current M1 groundwork).
+    ui.BeginLayout(64, 64)
+    ui.OpenElement()
+    var overflowElem = ctx:getOpenLayoutElement()
+    if overflowElem ~= nil then
+        var olc: ui.LayoutConfig
+        olc.sizing.width.type = ui.SIZING_FIXED
+        olc.sizing.width.size.min = 32
+        olc.sizing.width.size.max = 32
+        olc.sizing.height.type = ui.SIZING_FIXED
+        olc.sizing.height.size.min = 32
+        olc.sizing.height.size.max = 32
+        olc.padding.left = 0
+        olc.padding.right = 0
+        olc.padding.top = 0
+        olc.padding.bottom = 0
+        olc.childGap = 0
+        olc.childAlignment.x = ui.ALIGN_X_LEFT
+        olc.childAlignment.y = ui.ALIGN_Y_TOP
+        olc.layoutDirection = ui.LEFT_TO_RIGHT
+        overflowElem.layoutConfig = ctx:storeLayoutConfig(olc)
+
+        var ocfg: ui.OverflowConfig
+        ocfg.xMode = ui.OVERFLOW_CLIP
+        ocfg.yMode = ui.OVERFLOW_SCROLL
+        if not ui.AttachOverflowConfig(ocfg) then
+            ok = false
+        end
+    else
+        ok = false
+    end
+    ui.CloseElement()
+    ui.EndLayout()
+
     if not ui.FloatEqual(1.0, 1.0 + ui.EPSILON * 0.5) then
         ok = false
     end
