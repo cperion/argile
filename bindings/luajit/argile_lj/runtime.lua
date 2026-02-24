@@ -23,6 +23,31 @@ local function has_symbol(lib, name)
     return pcall(function() return lib[name] end)
 end
 
+local function to_bool(v)
+    return not not v
+end
+
+local function element_data_to_table(ed)
+    local bb = ed.boundingBox
+    local x = tonumber(bb.x) or 0
+    local y = tonumber(bb.y) or 0
+    local w = tonumber(bb.width) or 0
+    local h = tonumber(bb.height) or 0
+    return {
+        found = to_bool(ed.found),
+        x = x,
+        y = y,
+        width = w,
+        height = h,
+        boundingBox = {
+            x = x,
+            y = y,
+            width = w,
+            height = h,
+        },
+    }
+end
+
 function M.load(opts)
     opts = opts or {}
     ensure_paths()
@@ -38,6 +63,26 @@ end
 
 function M:has_symbol(name)
     return has_symbol(self.lib, name)
+end
+
+function M:get_element_id(name)
+    name = name or ""
+    return self.lib.GetElementIdFromChars(ffi.cast("char*", name), #name)
+end
+
+function M:element_data_to_table(ed)
+    return element_data_to_table(ed)
+end
+
+function M:set_debug_mode_enabled(enabled)
+    if not self:has_symbol("SetDebugModeEnabled") then return false end
+    self.lib.SetDebugModeEnabled(to_bool(enabled))
+    return true
+end
+
+function M:is_debug_mode_enabled()
+    if not self:has_symbol("IsDebugModeEnabled") then return false end
+    return to_bool(self.lib.IsDebugModeEnabled())
 end
 
 function M:mk_string(s)
@@ -130,6 +175,26 @@ M.Context = {}
 
 function M.Context:set_current()
     self.lib.SetCurrentContext(self.ctx)
+end
+
+function M.Context:set_debug_mode_enabled(enabled)
+    if not has_symbol(self.lib, "SetDebugModeEnabled") then return false end
+    self.lib.SetDebugModeEnabled(to_bool(enabled))
+    return true
+end
+
+function M.Context:is_debug_mode_enabled()
+    if not has_symbol(self.lib, "IsDebugModeEnabled") then return false end
+    return to_bool(self.lib.IsDebugModeEnabled())
+end
+
+function M.Context:get_element_data(id_or_name)
+    local id = id_or_name
+    if type(id_or_name) == "string" then
+        id = self.lib.GetElementIdFromChars(ffi.cast("char*", id_or_name), #id_or_name)
+    end
+    self:set_current()
+    return element_data_to_table(self.lib.GetElementData(id))
 end
 
 function M.Context:set_measure_text(fn, user_data)

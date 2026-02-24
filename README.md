@@ -1,6 +1,11 @@
 # Argile
 
-Argile is a Terra-native immediate-mode UI layout library with behavior parity goals against `clay.h`.
+Argile is a Terra-native immediate-mode UI layout library and embeddable UI kernel.
+
+Direction note:
+- The current strategic direction and roadmap are documented in `docs/argile-kernel-direction-rfc.md`.
+- The implementation breakdown and milestone/ticket execution plan are documented in `docs/argile-kernel-execution-program.md`.
+- Clay remains an important inspiration/reference point, but Argile is now explicitly positioned as a kernel-first engine with layered toolkits and bindings.
 
 The repository includes:
 - core Terra runtime (`src/`)

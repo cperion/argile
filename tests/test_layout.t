@@ -1121,9 +1121,26 @@ terra test_hover_and_element_data()
     ui.OnHover(hid, hover_callback, nil)
 
     var data = ui.GetElementData(hid)
+    var missingId = ui.HashString(ui.String { isStaticallyAllocated = true, length = 7, chars = "missing" }, 0)
+    var missingData = ui.GetElementData(missingId)
+
+    ui.SetCurrentContext(nil)
+    var noCtxData = ui.GetElementData(hid)
+    ui.SetCurrentContext(&ctx)
+
     var ok = ui.Hovered() and ui.PointerOver(hid) and data.found and hoverCallbackCount == 1
     if ok then
         if data.boundingBox.width < 99.0 or data.boundingBox.height < 79.0 then
+            ok = false
+        end
+    end
+    if ok then
+        if missingData.found or missingData.boundingBox.width ~= 0 or missingData.boundingBox.height ~= 0 then
+            ok = false
+        end
+    end
+    if ok then
+        if noCtxData.found or noCtxData.boundingBox.width ~= 0 or noCtxData.boundingBox.height ~= 0 then
             ok = false
         end
     end

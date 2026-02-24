@@ -48,6 +48,7 @@ This defines the compatibility contract for:
 - Runtime `ui.capi` usage (`BeginLayout`, `FinalizeLayout`, `OpenTextElement*`, render command inspection)
 - Runtime callback interop (`SetMeasureTextFunction*`) including callback invocation during real layout
 - Text measurement cache behavior (callback miss/hit/reset) via FFI
+- Layout inspection helpers (`GetElementData`) and debug mode toggles through the runtime wrapper
 - Canonical AST reuse and LuaJIT AST/DSL construction (host-language frontend side)
 - LÖVE2D reference integration through the official binding (`backends/love2d/demo_ffi`)
 
@@ -74,3 +75,35 @@ The probe now validates:
 - canonical AST reuse from LuaJIT
 - LuaJIT DSL wrapper -> portable AST validation
 - host compiler export detection (expected missing in `ui.capi`)
+
+## Layout Inspection Example
+
+After a frame is finalized, you can inspect computed element boxes from LuaJIT:
+
+```lua
+local argile_lj = require("bindings.luajit.argile_lj")
+local runtime = argile_lj.runtime.load({
+    ffi_def_path = "build/argile_api_ffi.lua",
+    lib_path = "build/libargile.so",
+})
+
+local ctx = runtime:create_context({ width = 800, height = 600 })
+
+-- Optional: enable engine debug diagnostics (if present in this build)
+runtime:set_debug_mode_enabled(true)
+
+ctx:set_current()
+-- ... build and finalize a frame here ...
+-- ctx:begin_layout(...)
+-- ...
+-- ctx:finalize_layout()
+
+local root_box = ctx:get_element_data("root")
+if root_box.found then
+    print("root:", root_box.x, root_box.y, root_box.width, root_box.height)
+end
+```
+
+Notes:
+- `ctx:get_element_data(...)` sets the context current before querying `GetElementData(...)` because the C API lookup is current-context based.
+- The helper accepts either an `ElementId` cdata value or a string element name.
