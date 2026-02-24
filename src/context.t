@@ -3581,6 +3581,81 @@ terra ui.GetScrollOffset() : config.Vector2
     return zero
 end
 
+terra ui.SetElementScrollOffsetForContext(ctx: &ui.Context, id: hash.ElementId, offset: config.Vector2) : bool
+    if ctx == nil then return false end
+    var scrollData = ctx:findScrollContainerData(id.id)
+    if scrollData == nil or scrollData.layoutElement == nil then
+        return false
+    end
+    var clipCfgResult = ui.FindElementConfigWithType(scrollData.layoutElement, config.CONFIG_CLIP)
+    if clipCfgResult == nil or clipCfgResult.config.clipConfig == nil then
+        return false
+    end
+
+    var clipCfg = clipCfgResult.config.clipConfig
+    scrollData.scrollPosition = offset
+
+    var canScrollVertically = clipCfg.vertical and scrollData.contentSize.height > scrollData.layoutElement.dimensions.height
+    var canScrollHorizontally = clipCfg.horizontal and scrollData.contentSize.width > scrollData.layoutElement.dimensions.width
+
+    if canScrollVertically then
+        var minY = -(scrollData.contentSize.height - scrollData.layoutElement.dimensions.height)
+        scrollData.scrollPosition.y = ui.clamp(scrollData.scrollPosition.y, minY, 0)
+    else
+        scrollData.scrollPosition.y = 0
+    end
+    if canScrollHorizontally then
+        var minX = -(scrollData.contentSize.width - scrollData.layoutElement.dimensions.width)
+        scrollData.scrollPosition.x = ui.clamp(scrollData.scrollPosition.x, minX, 0)
+    else
+        scrollData.scrollPosition.x = 0
+    end
+
+    scrollData.scrollMomentum.x = 0
+    scrollData.scrollMomentum.y = 0
+    scrollData.pointerScrollActive = false
+    scrollData.momentumTime = 0
+    scrollData.pointerOrigin.x = 0
+    scrollData.pointerOrigin.y = 0
+    scrollData.scrollOrigin = scrollData.scrollPosition
+    scrollData.previousDelta.x = 0
+    scrollData.previousDelta.y = 0
+
+    clipCfg.childOffset = scrollData.scrollPosition
+    return true
+end
+
+terra ui.SetElementScrollOffset(id: hash.ElementId, offset: config.Vector2) : bool
+    return ui.SetElementScrollOffsetForContext(ui.GetCurrentContext(), id, offset)
+end
+
+terra ui.GetElementScrollOffsetForContext(ctx: &ui.Context, id: hash.ElementId) : config.Vector2
+    var zero: config.Vector2
+    zero.x = 0
+    zero.y = 0
+    if ctx == nil then
+        return zero
+    end
+    var scrollData = ctx:findScrollContainerData(id.id)
+    if scrollData == nil or scrollData.layoutElement == nil then
+        return zero
+    end
+    var clipCfgResult = ui.FindElementConfigWithType(scrollData.layoutElement, config.CONFIG_CLIP)
+    if clipCfgResult == nil or clipCfgResult.config.clipConfig == nil then
+        return zero
+    end
+
+    -- Reuse setter-style clamping to keep reads deterministic after content size changes.
+    if not ui.SetElementScrollOffsetForContext(ctx, id, scrollData.scrollPosition) then
+        return zero
+    end
+    return scrollData.scrollPosition
+end
+
+terra ui.GetElementScrollOffset(id: hash.ElementId) : config.Vector2
+    return ui.GetElementScrollOffsetForContext(ui.GetCurrentContext(), id)
+end
+
 terra ui.GetScrollContainerData(id: hash.ElementId) : config.ScrollContainerData
     var out: config.ScrollContainerData
     out.scrollPosition = nil

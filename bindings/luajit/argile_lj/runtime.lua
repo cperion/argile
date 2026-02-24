@@ -48,6 +48,58 @@ local function element_data_to_table(ed)
     }
 end
 
+local function vec2_to_table(v)
+    return {
+        x = tonumber(v.x) or 0,
+        y = tonumber(v.y) or 0,
+    }
+end
+
+local function normalize_vec2(ffi_obj, a, b)
+    if type(a) == "cdata" then
+        return a
+    end
+    if type(a) == "table" then
+        return ffi_obj.new("struct Vector2", {
+            x = a.x or 0,
+            y = a.y or 0,
+        })
+    end
+    return ffi_obj.new("struct Vector2", {
+        x = a or 0,
+        y = b or 0,
+    })
+end
+
+local function scroll_container_data_to_table(sd)
+    local out = {
+        found = to_bool(sd.found),
+        scroll = { x = 0, y = 0 },
+        scroll_position = { x = 0, y = 0 },
+        viewport = {
+            width = tonumber(sd.scrollContainerDimensions.width) or 0,
+            height = tonumber(sd.scrollContainerDimensions.height) or 0,
+        },
+        content = {
+            width = tonumber(sd.contentDimensions.width) or 0,
+            height = tonumber(sd.contentDimensions.height) or 0,
+        },
+        config = {
+            horizontal = to_bool(sd.config.horizontal),
+            vertical = to_bool(sd.config.vertical),
+            childOffset = vec2_to_table(sd.config.childOffset),
+        },
+    }
+    if sd.scrollPosition ~= nil then
+        local sp = sd.scrollPosition[0]
+        local x = tonumber(sp.x) or 0
+        local y = tonumber(sp.y) or 0
+        out.scroll = { x = x, y = y }
+        out.scroll_position = { x = x, y = y }
+    end
+    return out
+end
+
 function M.load(opts)
     opts = opts or {}
     ensure_paths()
@@ -102,6 +154,10 @@ end
 
 function M:mk_dimensions(w, h)
     return ffi.new("struct Dimensions", { width = w or 0, height = h or 0 })
+end
+
+function M:mk_vector2(x, y)
+    return normalize_vec2(self.ffi, x, y)
 end
 
 function M:mk_color(r, g, b, a)
@@ -212,6 +268,52 @@ function M.Context:get_element_data(id_or_name)
     end
     self:set_current()
     return element_data_to_table(self.lib.GetElementData(id))
+end
+
+function M.Context:update_scroll_containers(enable_drag_scrolling, scroll_delta, delta_time)
+    local delta = normalize_vec2(self.ffi, scroll_delta, 0)
+    self.lib.UpdateScrollContainersForContext(self.ctx, to_bool(enable_drag_scrolling), delta, delta_time or 0)
+end
+
+function M.Context:get_scroll_container_data(id_or_name)
+    local id = id_or_name
+    if type(id_or_name) == "string" then
+        id = self.lib.GetElementIdFromChars(ffi.cast("char*", id_or_name), #id_or_name)
+    end
+    self:set_current()
+    return scroll_container_data_to_table(self.lib.GetScrollContainerData(id))
+end
+
+function M.Context:set_element_scroll_offset(id_or_name, x, y)
+    local id = id_or_name
+    if type(id_or_name) == "string" then
+        id = self.lib.GetElementIdFromChars(ffi.cast("char*", id_or_name), #id_or_name)
+    end
+    local offset = normalize_vec2(self.ffi, x, y)
+    self:set_current()
+    if has_symbol(self.lib, "SetElementScrollOffsetForContext") then
+        return to_bool(self.lib.SetElementScrollOffsetForContext(self.ctx, id, offset))
+    end
+    local data = self.lib.GetScrollContainerData(id)
+    if not data.found or data.scrollPosition == nil then return false end
+    data.scrollPosition[0] = offset
+    return true
+end
+
+function M.Context:get_element_scroll_offset(id_or_name)
+    local id = id_or_name
+    if type(id_or_name) == "string" then
+        id = self.lib.GetElementIdFromChars(ffi.cast("char*", id_or_name), #id_or_name)
+    end
+    self:set_current()
+    if has_symbol(self.lib, "GetElementScrollOffsetForContext") then
+        return vec2_to_table(self.lib.GetElementScrollOffsetForContext(self.ctx, id))
+    end
+    local data = self.lib.GetScrollContainerData(id)
+    if not data.found or data.scrollPosition == nil then
+        return { x = 0, y = 0 }
+    end
+    return vec2_to_table(data.scrollPosition[0])
 end
 
 function M.Context:attach_overflow_config(cfg_or_opts)

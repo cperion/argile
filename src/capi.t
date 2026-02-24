@@ -37,6 +37,10 @@ function M.build(ui)
     UpdateScrollContainers = ui.UpdateScrollContainers,
     UpdateScrollContainersForContext = ui.UpdateScrollContainersForContext,
     GetScrollOffset = ui.GetScrollOffset,
+    SetElementScrollOffset = ui.SetElementScrollOffset,
+    SetElementScrollOffsetForContext = ui.SetElementScrollOffsetForContext,
+    GetElementScrollOffset = ui.GetElementScrollOffset,
+    GetElementScrollOffsetForContext = ui.GetElementScrollOffsetForContext,
     GetScrollContainerData = ui.GetScrollContainerData,
 
     -- Element Construction

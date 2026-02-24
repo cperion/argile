@@ -1456,6 +1456,31 @@ terra test_api_coverage_smoke()
         end
     end
 
+    -- Explicit scroll state API by element id (setter clamps to container bounds).
+    var setPos: ui.Vector2
+    setPos.x = 1000
+    setPos.y = -1000
+    if not ui.SetElementScrollOffset(idA, setPos) then
+        ok = false
+    end
+    var clampedPos = ui.GetElementScrollOffset(idA)
+    if clampedPos.x ~= 0 or clampedPos.y > -219 or clampedPos.y < -221 then
+        ok = false
+    end
+    scrollData = ui.GetScrollContainerData(idA)
+    if not scrollData.found or scrollData.scrollPosition == nil then
+        ok = false
+    else
+        if scrollData.scrollPosition.x ~= clampedPos.x or scrollData.scrollPosition.y ~= clampedPos.y then
+            ok = false
+        end
+    end
+    setPos.x = -7
+    setPos.y = -11
+    if not ui.SetElementScrollOffset(idA, setPos) then
+        ok = false
+    end
+
     -- GetScrollOffset on currently open clip container (fallback path via childOffset).
     ui.BeginLayout(100, 100)
     ui.OpenElementWithId(idA)
