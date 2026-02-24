@@ -72,6 +72,9 @@ local lj_ast_probe = {
     error_count = 0,
 }
 local colors
+local demo_preview_image
+local demo_preview_image_key_buf
+local demo_preview_image_key
 
 -- ============================================================================
 -- Text Measurement Callback
@@ -259,6 +262,13 @@ local function border(color, width)
     }))
 end
 
+local function attach_image(image_data_key)
+    if image_data_key == nil then return end
+    argile.AttachImageConfig(ffi.new("struct ImageConfig", {
+        imageData = image_data_key,
+    }))
+end
+
 local function attach_paint_ops(ops)
     if ops == nil or #ops == 0 then return end
     local arr = ffi.new("struct PaintOp[?]", #ops)
@@ -277,6 +287,42 @@ local function attach_paint_ops(ops)
         if src.width ~= nil then op.width = src.width end
     end
     argile.AttachPaintConfig(ffi.new("struct PaintConfig", { ops = arr, count = #ops }))
+end
+
+local function make_demo_preview_image()
+    local w, h = 160, 96
+    local img = love.image.newImageData(w, h)
+    for y = 0, h - 1 do
+        for x = 0, w - 1 do
+            local u = x / math.max(1, w - 1)
+            local v = y / math.max(1, h - 1)
+            local grid = (((math.floor(x / 12) + math.floor(y / 12)) % 2) == 0) and 1 or 0
+            local r = 0.10 + 0.18 * u + 0.10 * grid
+            local g = 0.16 + 0.30 * (1 - v) + 0.06 * (1 - grid)
+            local b = 0.24 + 0.55 * u * (1 - v)
+
+            local cx, cy = w * 0.72, h * 0.42
+            local dx = (x - cx) / w
+            local dy = (y - cy) / h
+            local dist = math.sqrt(dx * dx + dy * dy)
+            local glow = math.max(0, 1 - dist * 4.4)
+            r = math.min(1, r + glow * 0.22)
+            g = math.min(1, g + glow * 0.28)
+            b = math.min(1, b + glow * 0.42)
+
+            if y >= h - 20 then
+                local stripe = 0.20 + 0.55 * u
+                r = r * 0.55 + stripe * 0.15
+                g = g * 0.55 + stripe * 0.22
+                b = b * 0.55 + stripe * 0.45
+            end
+
+            img:setPixel(x, y, r, g, b, 1.0)
+        end
+    end
+    local image = love.graphics.newImage(img)
+    image:setFilter("linear", "linear")
+    return image
 end
 
 local function label(id_name, text, opts)
@@ -734,6 +780,30 @@ local function build_card_scene(width, height)
     shared(mk_color(0.11, 0.13, 0.18, 1.0), 12)
     border(colors.border, 1)
     label("queue_title", "Queued Actions", { size = 16, color = colors.text })
+
+    open_el("queue_preview_image", ffi.new("struct LayoutConfig", {
+        sizing = ffi.new("struct Sizing", {
+            width = { type = argile.SIZING_FIXED, size = { min = queue_w - 28, max = queue_w - 28 }, percent = 0 },
+            height = { type = argile.SIZING_FIXED, size = { min = 112, max = 112 }, percent = 0 }
+        }),
+        padding = mk_padding(0, 0, 0, 0),
+        childGap = 0,
+        childAlignment = ffi.new("struct ChildAlignment", { x = argile.ALIGN_X_LEFT, y = argile.ALIGN_Y_TOP }),
+        layoutDirection = argile.LEFT_TO_RIGHT
+    }))
+    shared(mk_color(0.08, 0.10, 0.14, 1.0), 0)
+    border(mk_color(0.22, 0.26, 0.34, 1.0), 1)
+    attach_image(demo_preview_image_key)
+    close_el()
+
+    label("queue_preview_caption", "Renderer image registry (RENDER_IMAGE) bound to a LÖVE Image via opaque imageData pointer", {
+        size = 10,
+        color = colors.text_muted,
+        wrap = argile.TEXT_WRAP_WORDS,
+        line_height = 13,
+        wrap_width = queue_w - 28,
+    })
+
     local actions = {
         { "Warm compiler host", colors.accent },
         { "Rebuild token cache", mk_color(0.28, 0.80, 0.56, 1.0) },
@@ -902,6 +972,14 @@ end
 function love.load()
     love.window.setTitle("Argile + Love2D (LuaJIT FFI Authoring Demo)")
     love.window.setMode(1280, 720, { resizable = true, vsync = 1 })
+
+    demo_preview_image = make_demo_preview_image()
+    demo_preview_image_key_buf = ffi.new("char[1]")
+    demo_preview_image_key = ffi.cast("void*", demo_preview_image_key_buf)
+    renderer.register_image(demo_preview_image_key, {
+        drawable = demo_preview_image,
+        mode = "cover",
+    })
     
     -- Initialize Argile through official LuaJIT runtime wrapper
     runtime_ctx = runtime_client:create_context({
@@ -1072,6 +1150,12 @@ function love.keypressed(key)
 end
 
 function love.quit()
+    if demo_preview_image_key ~= nil and renderer.unregister_image ~= nil then
+        renderer.unregister_image(demo_preview_image_key)
+    end
+    demo_preview_image = nil
+    demo_preview_image_key = nil
+    demo_preview_image_key_buf = nil
     if runtime_ctx ~= nil then
         runtime_ctx:destroy()
         runtime_ctx = nil
