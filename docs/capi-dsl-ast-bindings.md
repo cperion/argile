@@ -487,6 +487,11 @@ Recommended behavior:
 
 This avoids per-frame compile cost while preserving canonical semantics.
 
+For environments that cannot directly expose the host compiler API cleanly, a **cached callback compile backend** (Terra -> Lua callback -> host compiler cache -> function pointer) is a valid transitional integration strategy. See:
+
+- `argile/docs/capi-dsl-callback-compile-backend-evaluation.md`
+- `argile/tools/experiment_terra_lua_callback_compile_cache.t`
+
 ### B. Runtime Shared Library (`ui.capi`) Only (Available Today)
 
 Use runtime layout/render/input APIs only. AST compilation is not exported there yet.
@@ -515,17 +520,30 @@ Recommended runtime behavior:
 - swap on successful compile
 - surface diagnostics without tearing down the running UI
 
-## Callback Bridge to Host Compiler (Fallback Only)
+## Callback Bridge to Host Compiler (Cached Transitional Backend)
 
-Terra can call Lua through cast function pointers, but this is slower and not the recommended primary architecture.
+Terra can call Lua through cast function pointers. This is slower than pure-Terra paths, but it can be a practical and shippable backend when compilation is cached and happens on change instead of every frame.
 
-Use a callback bridge only for:
+Use this backend when:
 
-- development tooling
-- hot-reload experiments
-- debugging fallback paths
+- you need DSL compilation in a host-integrated environment now
+- you can cache compiled artifacts
+- you want canonical semantics through the host compiler path
 
-Do not treat callback-based compile as the canonical or performance-sensitive path.
+Do **not** use this backend as:
+
+- a per-frame compile path
+- a replacement for a future pure-Terra runtime compiler if runtime AST compilation in `ui.capi` becomes a hard requirement
+- a reason to duplicate semantic logic outside the canonical compiler path
+
+Measured experiment and tradeoff discussion:
+
+- `argile/docs/capi-dsl-callback-compile-backend-evaluation.md`
+
+Practical user-facing framing:
+
+- "Compilation is cached and occurs on load/change; frame execution uses compiled UI functions."
+- "Runtime-only mode remains available through `ui.capi` without DSL compilation."
 
 ## Testing Guidance for Wrapper Authors
 

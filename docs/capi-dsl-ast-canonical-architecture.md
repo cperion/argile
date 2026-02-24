@@ -595,9 +595,23 @@ Therefore, `CapiDslAstCompile*` in the near term should be implemented as host-s
 
 If shipped in one `libargile.so`, these host compile entrypoints should still be exposed as a separate compiler-host ABI family, not merged into `ui.capi`.
 
-### Callback Bridge Fallback (Not Canonical)
+### Callback Bridge Backend (Transitional, Cached; Not Canonical Runtime Compiler)
 
-Calling host Lua compiler logic from Terra/runtime code via function-pointer callbacks is possible, but slower and harder to reason about. It may be used as a tooling/debug fallback, but it is not the primary architecture and must not replace the canonical host compiler path or justify a duplicate semantic engine.
+Calling host Lua compiler logic from Terra/runtime code via function-pointer callbacks is possible, slower than pure Terra paths, and harder to reason about than a runtime-native compiler.
+
+However, with **compile-on-change + cache**, this is a valid transitional backend for shipping DSL compilation support in host-integrated bindings while preserving canonical semantics.
+
+Rules:
+
+- callback backend must call canonical host compiler APIs (no duplicate semantics)
+- callback backend must be cache-backed
+- callback backend must not assume per-frame recompilation
+- callback backend does not redefine the long-term runtime compiler architecture (pure Terra lowering remains the clean end-state if runtime AST compile in `ui.capi` is required)
+
+Measured benchmark and tradeoff analysis:
+
+- `argile/docs/capi-dsl-callback-compile-backend-evaluation.md`
+- `argile/tools/experiment_terra_lua_callback_compile_cache.t`
 
 ## No Separate Semantic Path
 
