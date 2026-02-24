@@ -12,11 +12,11 @@
 -- Those are for portable-scene demos/tests, not FFI authoring showcase.
 
 local ffi = require("ffi")
+package.path = "./?.lua;./?/init.lua;./?.t;" .. package.path
 
--- Load Argile FFI bindings and helpers
+-- Load Argile FFI bindings, runtime wrapper, and demo renderer
 -- Path is relative to repo root when running: love backends/love2d/demo_ffi
-dofile("build/argile_api_ffi.lua")
-local ffi_helper = dofile("backends/love2d/ffi.lua")
+local argile_lj = require("bindings.luajit.argile_lj")
 local renderer = dofile("backends/love2d/renderer.lua")
 
 ffi.cdef[[
@@ -24,16 +24,19 @@ void* malloc(size_t size);
 void free(void* ptr);
 ]]
 
-local argile = ffi.load("build/libargile.so")
-ffi_helper.lib = argile
+local runtime_client = argile_lj.runtime.load({
+    ffi_def_path = "build/argile_api_ffi.lua",
+    lib_path = "build/libargile.so",
+})
+local argile = runtime_client.lib
 
 -- ============================================================================
 -- Demo State
 -- ============================================================================
 
 local arena_bytes = 256 * 1024 * 1024
-local arena_mem
 local ctx
+local runtime_ctx
 local cmd_count = 0
 local cmd_buffer = nil
 
@@ -51,6 +54,17 @@ local title_id
 local body_id
 local footer_id
 
+local lj_capabilities = {
+    host_compiler_exports = false,
+    host_callback_backend_exports = false,
+    missing_count = 0,
+}
+
+local lj_ast_probe = {
+    portable_ok = false,
+    error_count = 0,
+}
+
 -- ============================================================================
 -- Text Measurement Callback
 -- ============================================================================
@@ -58,10 +72,7 @@ local footer_id
 -- New FFI-friendly signature: takes out pointer, returns int32 success
 -- Pattern: int32_t (*)(struct StringSlice*, struct TextConfig*, void*, struct Dimensions*)
 
--- Define callback at module level (not inside function) for proper LuaJIT FFI casting
-local text_measure_callback = ffi.cast(
-    "int32_t (*)(struct StringSlice*, struct TextConfig*, void*, struct Dimensions*)",
-    function(text_slice_ptr, text_config, user_data, out_dims)
+local function text_measure_callback(text_slice_ptr, text_config, user_data, out_dims)
         -- text_slice_ptr is a pointer to StringSlice
         local text_slice = text_slice_ptr[0]
         
@@ -94,12 +105,10 @@ local text_measure_callback = ffi.cast(
         
         -- Return 1 for success
         return 1
-    end
-)
+end
 
 local function init_text_measure_callback()
-    -- Callback is already initialized at module load
-    -- This function exists for API compatibility
+    runtime_ctx:set_measure_text(text_measure_callback)
 end
 
 -- ============================================================================
@@ -199,10 +208,48 @@ local colors = {
     disabled = mk_color(0.0, 0.0, 0.0, 0.35),
 }
 
+local function run_lj_ast_probe()
+    local DSL = argile_lj.dsl
+    local AST = argile_lj.ast
+
+    local program = DSL.program({
+        decls = {
+            DSL.theme("demo", {
+                tokens = {
+                    DSL.token_decl("colors.text", { r = 0.9, g = 0.9, b = 0.9, a = 1.0 }),
+                },
+            }),
+            DSL.component("Label", {
+                params = { "text", "tone" },
+                variants = { tone = { "primary", "muted" } },
+                root = DSL.el({
+                    id = "label_root",
+                    children = {
+                        DSL.text({
+                            id = "label_text",
+                            text = DSL.path("props.text"),
+                            typography = {
+                                { "font_size", 16 },
+                                { "color", DSL.token("colors.text") },
+                            },
+                        }),
+                    },
+                }),
+            }),
+        },
+        body = {
+            DSL.invoke("Label", { text = "LJ DSL AST probe", tone = DSL.sym("primary") }),
+        },
+    })
+
+    local ok, errors = AST.validate_portable(program)
+    lj_ast_probe.portable_ok = ok
+    lj_ast_probe.error_count = ok and 0 or #errors
+end
+
 local function build_card_scene(width, height)
     -- Set current context and text measure callback
-    argile.SetCurrentContext(ctx)
-    argile.SetMeasureTextFunctionForContext(ctx, text_measure_callback, nil)
+    runtime_ctx:set_current()
     
     -- Begin layout
     argile.BeginLayout(width, height)
@@ -353,17 +400,13 @@ function love.load()
     love.window.setTitle("Argile + Love2D (LuaJIT FFI Authoring Demo)")
     love.window.setMode(1280, 720, { resizable = true, vsync = 1 })
     
-    -- Initialize Argile
-    arena_mem = ffi.C.malloc(arena_bytes)
-    if arena_mem == nil then
-        error("Failed to allocate arena memory")
-    end
-    
-    local arena = argile.CreateArenaWithCapacityAndMemory(arena_bytes, arena_mem)
-    ctx = argile.Initialize(arena, ffi_helper.mk_dimensions(1280, 720))
-    if ctx == nil then
-        error("Argile Initialize failed")
-    end
+    -- Initialize Argile through official LuaJIT runtime wrapper
+    runtime_ctx = runtime_client:create_context({
+        width = 1280,
+        height = 720,
+        arena_bytes = arena_bytes,
+    })
+    ctx = runtime_ctx.ctx
     
     -- Verify API version
     local api_version = tonumber(argile.GetApiVersion())
@@ -384,6 +427,13 @@ function love.load()
     
     -- Initialize text measure callback (stored in upvalue to prevent GC)
     init_text_measure_callback()
+
+    -- Probe package capabilities and canonical AST/DSL portability.
+    local caps = argile_lj.compiler.detect(argile)
+    lj_capabilities.host_compiler_exports = caps.host_compiler_exports
+    lj_capabilities.host_callback_backend_exports = caps.host_callback_backend_exports
+    lj_capabilities.missing_count = #caps.missing
+    run_lj_ast_probe()
 end
 
 function love.update(dt)
@@ -435,11 +485,20 @@ function love.draw()
     love.graphics.setColor(1, 1, 1, 1)
     love.graphics.print(("Argile commands: %d"):format(cmd_count), 14, 12)
     love.graphics.print(("FPS: %d"):format(love.timer.getFPS()), 14, 30)
-    love.graphics.print("UI authored in LuaJIT via Argile C/FFI API (no Terra scene export)", 14, 48)
+    love.graphics.print("UI authored in LuaJIT via argile_lj runtime (no Terra scene export)", 14, 48)
     love.graphics.print(("States: [F]ocus=%s [S]elected=%s [D]isabled=%s [R]eset"):format(
         tostring(demo_focus), tostring(demo_selected), tostring(demo_disabled)
     ), 14, 66)
     love.graphics.print(("Hover: %s | Active: %s"):format(tostring(demo_hover), tostring(demo_active)), 14, 84)
+    love.graphics.print(("argile_lj runtime init mode: %s"):format(tostring(runtime_ctx and runtime_ctx.init_mode or "?")), 14, 102)
+    love.graphics.print(("argile_lj AST portable probe: %s (errors=%d)"):format(
+        tostring(lj_ast_probe.portable_ok), tonumber(lj_ast_probe.error_count or 0)
+    ), 14, 120)
+    love.graphics.print(("Host compiler exports in libargile.so: compiler=%s callback_backend=%s missing=%d"):format(
+        tostring(lj_capabilities.host_compiler_exports),
+        tostring(lj_capabilities.host_callback_backend_exports),
+        tonumber(lj_capabilities.missing_count or 0)
+    ), 14, 138)
 end
 
 function love.keypressed(key)
@@ -457,8 +516,8 @@ function love.keypressed(key)
 end
 
 function love.quit()
-    if arena_mem ~= nil then
-        ffi.C.free(arena_mem)
-        arena_mem = nil
+    if runtime_ctx ~= nil then
+        runtime_ctx:destroy()
+        runtime_ctx = nil
     end
 end
