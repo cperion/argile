@@ -8,6 +8,22 @@ Current goals:
 - Provide a LuaJIT-native DSL wrapper (table/metatable style) that builds canonical AST tables
 - Keep the compiler boundary explicit (`ui.capi` runtime-only today; host compiler APIs are not exported yet)
 
+## Binding Layering Policy (Engine vs Widget Bindings)
+
+`argile_lj` is the canonical engine-level LuaJIT binding. Higher-level bindings (for example `argile-ui` widget bindings) should layer on top of it, not fork the FFI runtime loader.
+
+See:
+
+- `docs/luajit-binding-layering.md`
+
+This defines the compatibility contract for:
+
+- shared `ffi.cdef` / `ffi.load`
+- runtime context object reuse
+- string and ID lifetime semantics
+- callback GC safety
+- version/capability checks
+
 ## Modules
 
 - `bindings.luajit.argile_lj.runtime`
@@ -33,6 +49,7 @@ Current goals:
 - Runtime callback interop (`SetMeasureTextFunction*`) including callback invocation during real layout
 - Text measurement cache behavior (callback miss/hit/reset) via FFI
 - Canonical AST reuse and LuaJIT AST/DSL construction (host-language frontend side)
+- LÖVE2D reference integration through the official binding (`backends/love2d/demo_ffi`)
 
 ## What Is Not Available From `ui.capi` Today
 

@@ -4,6 +4,53 @@
 local ffi = require("ffi")
 
 local renderer = {}
+renderer._font_cache = {}
+renderer._scissor_stack = {}
+
+local function clamp_nonnegative(v)
+    if v < 0 then return 0 end
+    return v
+end
+
+local function intersect_rect(a, b)
+    local x1 = math.max(a.x, b.x)
+    local y1 = math.max(a.y, b.y)
+    local x2 = math.min(a.x + a.w, b.x + b.w)
+    local y2 = math.min(a.y + a.h, b.y + b.h)
+    if x2 <= x1 or y2 <= y1 then
+        return { x = x1, y = y1, w = 0, h = 0 }
+    end
+    return { x = x1, y = y1, w = x2 - x1, h = y2 - y1 }
+end
+
+local function get_font(size, line_height)
+    size = math.max(1, math.floor(tonumber(size) or 16))
+    line_height = math.floor(tonumber(line_height) or 0)
+    local key = tostring(size) .. ":" .. tostring(line_height)
+    local font = renderer._font_cache[key]
+    if font ~= nil then
+        return font
+    end
+    font = love.graphics.newFont(size)
+    if line_height > 0 then
+        local base_h = font:getHeight()
+        if base_h > 0 then
+            font:setLineHeight(line_height / base_h)
+        end
+    end
+    renderer._font_cache[key] = font
+    return font
+end
+
+function renderer.begin_frame()
+    renderer._scissor_stack = {}
+    love.graphics.setScissor()
+end
+
+function renderer.end_frame()
+    renderer._scissor_stack = {}
+    love.graphics.setScissor()
+end
 
 function renderer.set_color(c)
     local r = tonumber(c.r or 0)
@@ -48,8 +95,16 @@ function renderer.draw_text(cmd)
     local slice = t.stringContents
     if slice == nil or slice.chars == nil or slice.length <= 0 then return end
     renderer.set_color(t.textColor)
+    local prev_font = love.graphics.getFont()
+    local font = get_font(t.fontSize, t.lineHeight)
+    love.graphics.setFont(font)
     local s = ffi.string(slice.chars, tonumber(slice.length))
-    love.graphics.print(s, cmd.boundingBox.x, cmd.boundingBox.y)
+    local x = tonumber(cmd.boundingBox.x)
+    local y = tonumber(cmd.boundingBox.y)
+    -- Argile already performs text layout/wrapping and emits positioned text
+    -- commands. The Love backend should only draw the provided slice.
+    love.graphics.print(s, x, y)
+    love.graphics.setFont(prev_font)
 end
 
 -- Paint operation kinds from FFI: PAINT_OP_FILL=0, PAINT_OP_STROKE=1, etc.
@@ -90,6 +145,35 @@ function renderer.draw_paint(cmd, argile)
             love.graphics.setLineWidth(prev)
         end
         i = i + 1
+    end
+end
+
+function renderer.draw_scissor_start(cmd)
+    local rect = {
+        x = tonumber(cmd.boundingBox.x) or 0,
+        y = tonumber(cmd.boundingBox.y) or 0,
+        w = clamp_nonnegative(tonumber(cmd.boundingBox.width) or 0),
+        h = clamp_nonnegative(tonumber(cmd.boundingBox.height) or 0),
+    }
+    local stack = renderer._scissor_stack
+    local top = stack[#stack]
+    if top ~= nil then
+        rect = intersect_rect(top, rect)
+    end
+    stack[#stack + 1] = rect
+    love.graphics.setScissor(rect.x, rect.y, rect.w, rect.h)
+end
+
+function renderer.draw_scissor_end()
+    local stack = renderer._scissor_stack
+    if #stack > 0 then
+        stack[#stack] = nil
+    end
+    local top = stack[#stack]
+    if top ~= nil then
+        love.graphics.setScissor(top.x, top.y, top.w, top.h)
+    else
+        love.graphics.setScissor()
     end
 end
 

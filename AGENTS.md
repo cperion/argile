@@ -2,12 +2,13 @@
 
 ## Project Structure & Module Organization
 Argile ports `ref/clay.h` into a Terra-native UI library with parity tests and LuaJIT benchmarks.
-- `src/`: runtime modules (`arena`, `array`, `config`, `layout`, `context`, `init`) and compile-time builder (`builder`).
-- `tests/`: foundation, layout, and builder coverage (`test_foundation.t`, `test_layout.t`, `test_builder.t`).
+- `src/`: runtime modules, canonical DSL parser/compiler/AST, C API exports, and host-side AST/compiler integration APIs.
+- `tests/`: foundation, layout, compiler/AST, and regression coverage.
 - `bench/`: Clay-vs-Argile benchmark harness.
-- `demo/love/`: Love2D demo using `build/libargile.so` via LuaJIT FFI.
+- `bindings/`: official language bindings (LuaJIT reference integration lives in `bindings/luajit/`).
+- `backends/`: backend integrations and reference demos (including Love2D FFI demo and SDL/raylib backends).
 - `tools/`: build scripts (`build_argile.t`, `build_bench.sh`, `build_terra.t`) and benchmark backends.
-- `docs/design.md`, `docs/ai-guide.md`, `docs/terra/*`: design and Terra references.
+- `docs/`: architecture, bindings, design notes, and Terra references (`docs/terra/*`).
 - `ref/clay.h`: source-of-truth behavior reference.
 
 ## Build, Test, and Development Commands
@@ -19,6 +20,7 @@ Default workflow:
 - `make build-parity`: build Argile/Clay parity libraries + FFI bindings.
 - `make parity`, `make parity-quick`, `make parity-stress`: run tolerance-based layout parity checks.
 - `make love-demo`: run the Love2D demo.
+- `luajit tools/experiment_luajit_ffi_surface_probe.lua`: probe official LuaJIT runtime/AST DSL integration against `libargile.so`.
 - `rg "pattern" src tests tools`: fast code search.
 
 ## Coding Style & Naming Conventions
@@ -28,6 +30,7 @@ Default workflow:
 - Use `while` loops for control flow that would otherwise require `continue`.
 - Use `ui.capi` for stable C/FFI exports; keep internal helpers on full `ui` only.
 - Validate Terra semantics with `docs/terra/api.md` before ABI or metaprogramming changes.
+- Official LuaJIT engine bindings live in `bindings/luajit/argile_lj`; downstream widget bindings should layer on top (see `docs/luajit-binding-layering.md`).
 
 ## Testing & Benchmarking Guidelines
 - Add regression tests for every layout/math/hash bug fix.

@@ -4,6 +4,15 @@ This document explains how to use the host-side Argile DSL AST API (`CapiDslAst*
 
 This is the low-level API intended for bindings/wrapper authors who want to rebuild Argile ergonomics in another host language while preserving canonical semantics.
 
+Ownership note:
+
+- official language bindings and backend reference demos are part of the `argile` repository/module
+- higher-level widget kits (such as `argile-ui`) should sit on top of those bindings/runtime APIs instead of re-owning engine bindings
+
+For the LuaJIT-specific layering/compatibility contract between engine bindings (`argile_lj`) and downstream widget bindings, see:
+
+- `docs/luajit-binding-layering.md`
+
 ## Scope and Phase Boundary
 
 Argile currently exposes two different integration surfaces:
@@ -44,6 +53,7 @@ Repository reference implementation (LuaJIT):
 - `bindings/luajit/argile_lj/compiler.lua` (host compiler export detection / boundary reporting)
 - `bindings/luajit/README.md` (package-level guide)
 - `tools/experiment_luajit_ffi_surface_probe.lua` (runtime + callback + AST/DSL probe)
+- `backends/love2d/demo_ffi/` (reference app integration using the official LuaJIT binding)
 
 Important:
 

@@ -42,6 +42,11 @@ This document exists to lock that architecture in place and prevent:
 - prototype implementations drifting from the real DSL
 - ambiguous "minimal phase" scopes that produce half-integrated work
 
+Repository ownership alignment:
+
+- `argile` owns the engine, canonical DSL/AST/compiler pipeline, stable runtime ABI (`ui.capi`), official bindings, and backend reference demos
+- downstream projects (for example `argile-ui`) should be treated as consumers that build widgets/toolkits/apps on top of Argile, not alternate homes for Argile bindings
+
 ## Problem Statement
 
 We need an Argile-facing API architecture that enables bindings users (LuaJIT, Rust, Python, etc.) to:

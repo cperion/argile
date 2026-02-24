@@ -4,9 +4,11 @@ Argile is a Terra-native immediate-mode UI layout library with behavior parity g
 
 The repository includes:
 - core Terra runtime (`src/`)
+- canonical DSL parser/compiler/AST and host-side AST/compiler APIs (`src/lang/*`, `src/dsl_*`, `src/capi_dsl_*`)
 - parity and regression tests (`tests/`)
+- official language bindings (LuaJIT reference integration in `bindings/luajit/`)
+- backend integrations and reference demos (`backends/`, including Love2D FFI demo)
 - LuaJIT benchmark suite against Clay (`bench/`)
-- a Love2D demo that consumes `libargile.so` through FFI (`demo/love/`)
 
 ## Requirements
 
@@ -54,7 +56,7 @@ This compares per-element layout boxes (by ID) between `build/libargile_parity.s
 make love-demo
 ```
 
-The demo uses the main Argile library (`libargile.so`) and stable FFI API (`argile_api_ffi.lua`), not a special demo backend.
+The Love2D FFI demo lives in `backends/love2d/demo_ffi/` and uses the main Argile library (`libargile.so`) plus the official LuaJIT reference binding (`bindings/luajit/argile_lj`), not a special demo backend.
 
 ## API Surface
 
@@ -66,7 +68,11 @@ The demo uses the main Argile library (`libargile.so`) and stable FFI API (`argi
 ## Repository Map
 
 - `src/context.t`: layout engine, render command generation, interaction, and stable runtime API wrappers.
-- `src/builder.t`: compile-time Lua table to Terra AST builder (`ui.compile`).
+- `src/dsl_compiler.t`: canonical Argile DSL compiler (host-side Lua/Terra metaprogramming path).
+- `src/lang/argile.t`, `src/lang/ast.t`: canonical parser and AST definitions.
+- `src/capi_dsl_ast.t`, `src/capi_dsl_compile.t`, `src/capi_dsl_host*.t`: host-side AST/compiler APIs for bindings/tooling.
+- `bindings/luajit/`: official LuaJIT runtime + AST/DSL reference integration.
+- `backends/love2d/demo_ffi/`: LuaJIT FFI authoring demo using `libargile.so`.
 - `tools/build_argile.t`: builds shared library and generates LuaJIT `ffi.cdef`.
 - `tools/build_bench.sh`: builds benchmark backends.
 - `tools/build_parity.sh`: builds parity backends and generated parity FFI cdefs.
