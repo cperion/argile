@@ -13,6 +13,7 @@ renderer.dispatcher = dispatcher
 local state = {
     font_cache = {},
     image_registry = {},
+    stencil_ref = 0,
     scissor_stack = {},
     base_scissor = nil,
     saved = nil,
@@ -22,6 +23,8 @@ local state = {
         font = nil,
         line_style = nil,
         line_join = nil,
+        stencil_mode = nil,
+        stencil_value = nil,
     },
     config = {
         preserve_host_state = true,
@@ -214,12 +217,34 @@ local function cache_set_line_join(join)
     state.cache.line_join = join
 end
 
+local function cache_set_stencil_test(mode, value)
+    if lg.setStencilTest == nil then return false end
+    if mode == nil then
+        if state.cache.stencil_mode == false then return true end
+        lg.setStencilTest()
+        state.cache.stencil_mode = false
+        state.cache.stencil_value = 0
+        return true
+    end
+    value = tonumber(value) or 0
+    if state.cache.stencil_mode == mode and state.cache.stencil_value ~= nil
+        and approx_equal(state.cache.stencil_value, value) then
+        return true
+    end
+    lg.setStencilTest(mode, value)
+    state.cache.stencil_mode = mode
+    state.cache.stencil_value = value
+    return true
+end
+
 local function reset_runtime_caches()
     state.cache.color = nil
     state.cache.line_width = nil
     state.cache.font = nil
     state.cache.line_style = nil
     state.cache.line_join = nil
+    state.cache.stencil_mode = nil
+    state.cache.stencil_value = nil
 end
 
 local function save_host_state()
@@ -251,6 +276,14 @@ local function save_host_state()
         saved.scissor = nil
     end
 
+    if lg.getStencilTest then
+        local ok, mode, value = pcall(lg.getStencilTest)
+        if ok then
+            saved.stencil_mode = mode
+            saved.stencil_value = tonumber(value) or 0
+        end
+    end
+
     state.saved = saved
 end
 
@@ -265,6 +298,16 @@ local function restore_host_state()
         lg.setScissor(saved.scissor.x, saved.scissor.y, saved.scissor.w, saved.scissor.h)
     else
         lg.setScissor()
+    end
+
+    if saved.stencil_mode ~= nil then
+        if saved.stencil_mode == "always" then
+            cache_set_stencil_test(nil)
+        else
+            cache_set_stencil_test(saved.stencil_mode, saved.stencil_value or 0)
+        end
+    else
+        cache_set_stencil_test(nil)
     end
 
     if saved.line_style ~= nil then cache_set_line_style(saved.line_style) end
@@ -304,6 +347,19 @@ local function init_frame_stats()
         scissor_depth_max = 0,
         unknown_commands = 0,
     }
+end
+
+local function next_stencil_ref()
+    local ref = (tonumber(state.stencil_ref) or 0) + 1
+    if ref > 255 then
+        ref = 1
+        if lg.stencil ~= nil then
+            -- Clear the stencil buffer when we wrap the reference id.
+            lg.stencil(function() end, "replace", 0, false)
+        end
+    end
+    state.stencil_ref = ref
+    return ref
 end
 
 local function bump_stat_command(kind)
@@ -462,6 +518,54 @@ local function lookup_registered_image(cmd)
     return state.image_registry[key]
 end
 
+local function draw_with_rounded_image_clip(bb, corner_radius, draw_fn)
+    if draw_fn == nil then return false end
+    local r = corner_radius_uniform_for_love(corner_radius, bb.w, bb.h)
+    if r <= 0 then
+        return draw_fn()
+    end
+    if lg.stencil == nil or lg.setStencilTest == nil then
+        return draw_fn()
+    end
+
+    local parent_scissor = current_scissor_parent()
+    local clip_scissor = normalize_scissor_rect(bb)
+    if parent_scissor ~= nil then
+        clip_scissor = normalize_scissor_rect(intersect_rect(parent_scissor, clip_scissor))
+    end
+
+    local prev_mode, prev_value = "always", 0
+    if lg.getStencilTest ~= nil then
+        local ok, mode, value = pcall(lg.getStencilTest)
+        if ok and mode ~= nil then
+            prev_mode = mode
+            prev_value = tonumber(value) or 0
+        end
+    end
+
+    local ref = next_stencil_ref()
+    local ok, result = pcall(function()
+        apply_scissor_rect(clip_scissor)
+        cache_set_stencil_test(nil)
+        lg.stencil(function()
+            lg.rectangle("fill", bb.x, bb.y, bb.w, bb.h, r, r)
+        end, "replace", ref, true)
+        cache_set_stencil_test("equal", ref)
+        return draw_fn()
+    end)
+
+    -- Restore prior stencil/scissor state even if image draw throws.
+    if prev_mode == "always" then
+        cache_set_stencil_test(nil)
+    else
+        cache_set_stencil_test(prev_mode, prev_value)
+    end
+    apply_scissor_rect(parent_scissor)
+
+    if not ok then error(result) end
+    return result
+end
+
 local function draw_border_uniform(cmd, b, bb)
     local w_left = tonumber(b.width.left) or 0
     if w_left <= 0 then return end
@@ -557,6 +661,7 @@ end
 function renderer.begin_frame()
     state.scissor_stack = {}
     state.base_scissor = nil
+    state.stencil_ref = 0
     state.saved = nil
     reset_runtime_caches()
     init_frame_stats()
@@ -615,17 +720,20 @@ function renderer.draw_rectangle(cmd)
 end
 
 function renderer.draw_image(cmd)
-    local hook = state.hooks.image
-    if hook ~= nil and hook(cmd, renderer) == true then
-        return
-    end
-
     local bb = get_bbox(cmd)
     if bb.w <= 0 or bb.h <= 0 then return end
     local d = cmd.renderData.image
-    if draw_registered_image_entry(lookup_registered_image(cmd), cmd, bb) then
-        return
+    local function draw_payload()
+        local hook = state.hooks.image
+        if hook ~= nil and hook(cmd, renderer) == true then
+            return true
+        end
+        if draw_registered_image_entry(lookup_registered_image(cmd), cmd, bb) then
+            return true
+        end
+        return false
     end
+    if draw_with_rounded_image_clip(bb, d.cornerRadius, draw_payload) then return end
 
     -- Generic fallback: draw the backgroundColor and let host apps install an
     -- image hook / registry binding when they can map imageData pointers.

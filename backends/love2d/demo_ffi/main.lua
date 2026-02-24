@@ -791,7 +791,7 @@ local function build_card_scene(width, height)
         childAlignment = ffi.new("struct ChildAlignment", { x = argile.ALIGN_X_LEFT, y = argile.ALIGN_Y_TOP }),
         layoutDirection = argile.LEFT_TO_RIGHT
     }))
-    shared(mk_color(0.08, 0.10, 0.14, 1.0), 0)
+    shared(mk_color(0.08, 0.10, 0.14, 1.0), 12)
     border(mk_color(0.22, 0.26, 0.34, 1.0), 1)
     attach_image(demo_preview_image_key)
     close_el()
