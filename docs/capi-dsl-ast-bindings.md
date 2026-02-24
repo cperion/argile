@@ -67,6 +67,7 @@ Use capability checks instead of guessing what the host API supports:
 - `CAPI_DSL_AST_FEATURE_RECIPES`
 - `CAPI_DSL_AST_FEATURE_COMPILE`
 - `CAPI_DSL_AST_FEATURE_COMPILE_CACHE`
+- `CAPI_DSL_AST_FEATURE_CALLBACK_BACKEND`
 - `CAPI_DSL_AST_FEATURE_SOURCE_META`
 - `CAPI_DSL_AST_FEATURE_DIAGNOSTICS`
 
@@ -544,6 +545,28 @@ Practical user-facing framing:
 
 - "Compilation is cached and occurs on load/change; frame execution uses compiled UI functions."
 - "Runtime-only mode remains available through `ui.capi` without DSL compilation."
+
+## Host Callback Backend Helper API (Host-Side)
+
+Argile now includes a host-side helper API that packages the cached callback backend pattern used in the evaluation experiment:
+
+- create backend:
+  - `CapiDslAstHostCreateCallbackBackend(hostCompilerCtx, builder, program, env_fn, registry?, options?)`
+- configure routes (mode -> cache key + optional global compile name):
+  - `CapiDslAstHostCallbackSetRenderRoute(...)`
+  - `CapiDslAstHostCallbackGetRenderRoute(...)`
+- fetch pointers directly:
+  - `CapiDslAstHostCallbackFetchRenderFunctionPointer(...)`
+  - `CapiDslAstHostCallbackTryFetchRenderFunctionPointer(...)`
+- get Terra callback function pointer (`int32 -> &opaque`):
+  - `CapiDslAstHostCallbackGetFetchRenderFunctionPointerCallback(...)`
+- diagnostics/stats/lifecycle:
+  - `CapiDslAstHostCallbackGetLastError(...)`
+  - `CapiDslAstHostCallbackClearLastError(...)`
+  - `CapiDslAstHostCallbackGetStats(...)`
+  - `CapiDslAstHostDestroyCallbackBackend(...)`
+
+This helper is intended to support host-integrated bindings and future compiler shims while keeping semantics on the canonical host compiler path.
 
 ## Testing Guidance for Wrapper Authors
 

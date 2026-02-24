@@ -18,6 +18,7 @@
 - host-side compile entrypoints split into `src/capi_dsl_compile.t`
 - host API aggregator (`src/capi_dsl_host.t`) exposed via `ui.GetDslAstApi()`
 - host compiler context + compile cache API (`src/capi_dsl_host_compiler.t`)
+- host callback-backend helper API (`src/capi_dsl_host_callback_backend.t`) for cached Terra->Lua callback compilation
 - host-side compile diagnostics helpers (`TryCompile*`, last compile error)
 - host-side builder diagnostics helpers (`TryCall`, last builder error)
 - host compiler-context diagnostics and cache stats/invalidation helpers
