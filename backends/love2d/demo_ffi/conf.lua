@@ -3,7 +3,7 @@
 
 function love.conf(t)
     t.title = "Argile + Love2D (LuaJIT FFI Authoring Demo)"
-    t.version = "11.4"
+    t.version = "11.5"
     t.window.width = 1280
     t.window.height = 720
     t.window.resizable = true

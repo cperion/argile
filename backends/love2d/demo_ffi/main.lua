@@ -1001,24 +1001,7 @@ function love.draw()
     -- Render commands
     if cmd_buffer ~= nil then
         renderer.begin_frame()
-        for i = 0, cmd_count - 1 do
-            local cmd = cmd_buffer[i]
-            local cmd_type = tonumber(cmd.commandType)
-            
-            if cmd_type == argile.RENDER_RECTANGLE then
-                renderer.draw_rectangle(cmd)
-            elseif cmd_type == argile.RENDER_BORDER then
-                renderer.draw_border(cmd)
-            elseif cmd_type == argile.RENDER_TEXT then
-                renderer.draw_text(cmd)
-            elseif cmd_type == argile.RENDER_PAINT then
-                renderer.draw_paint(cmd, argile)
-            elseif cmd_type == argile.RENDER_SCISSOR_START then
-                renderer.draw_scissor_start(cmd)
-            elseif cmd_type == argile.RENDER_SCISSOR_END then
-                renderer.draw_scissor_end()
-            end
-        end
+        renderer.draw_commands(cmd_buffer, cmd_count, argile)
         renderer.end_frame()
     end
     

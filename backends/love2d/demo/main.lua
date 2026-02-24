@@ -96,23 +96,11 @@ function love.draw()
     love.graphics.clear(0.06, 0.08, 0.12, 1.0)
 
     -- Render commands
+    renderer.begin_frame()
     if cmd_buffer ~= nil then
-        for i = 0, cmd_count - 1 do
-            local cmd = cmd_buffer[i]
-            local cmd_type = tonumber(cmd.commandType)
-            
-            if cmd_type == argile.RENDER_RECTANGLE then
-                renderer.draw_rectangle(cmd)
-            elseif cmd_type == argile.RENDER_BORDER then
-                renderer.draw_border(cmd)
-            elseif cmd_type == argile.RENDER_TEXT then
-                renderer.draw_text(cmd)
-            elseif cmd_type == argile.RENDER_PAINT then
-                renderer.draw_paint(cmd, argile)
-            end
-            -- RENDER_CUSTOM and others are ignored
-        end
+        renderer.draw_commands(cmd_buffer, cmd_count, argile)
     end
+    renderer.end_frame()
 
     -- Debug HUD
     love.graphics.setColor(1, 1, 1, 1)
