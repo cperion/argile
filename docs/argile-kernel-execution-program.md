@@ -112,9 +112,9 @@ Primary files:
 ### WS-D: Toolkit + Widget Ergonomics (`argile-ui` root repo)
 
 Primary files:
-- `bindings/luajit/argile_ui_lj/runtime.lua`
-- `bindings/luajit/argile_ui_lj/widgets.lua`
-- `examples/love2d/demo_luajit_widgets/main.lua`
+- `hosts/luajit/argile_ui_lj/runtime.lua`
+- `hosts/luajit/argile_ui_lj/widgets.lua`
+- `platforms/love2d/luajit/demo_widgets/main.lua`
 - `widgets/components/*`
 
 ### WS-E: Tests + Conformance
@@ -251,7 +251,7 @@ Scope:
 - avoid duplicating raw FFI logic
 
 Files (argile-ui root):
-- `bindings/luajit/argile_ui_lj/runtime.lua`
+- `hosts/luajit/argile_ui_lj/runtime.lua`
 
 Acceptance:
 - widget demos can inspect boxes via high-level session object
@@ -263,7 +263,7 @@ Scope:
 - show IDs and bounding boxes for debugging
 
 Files (argile-ui root):
-- `examples/love2d/demo_luajit_widgets/main.lua`
+- `platforms/love2d/luajit/demo_widgets/main.lua`
 
 Acceptance:
 - key press toggles overlay
@@ -272,7 +272,7 @@ Acceptance:
 #### K0-032: Add "layout debug checklist" section to demo README
 
 Files (argile-ui root):
-- `examples/love2d/demo_luajit_widgets/README.md`
+- `platforms/love2d/luajit/demo_widgets/README.md`
 
 Acceptance:
 - contributors know how to inspect layout issues before guessing
@@ -477,7 +477,7 @@ Acceptance:
 #### K1-050: Add widget-level `scroll_panel` helper
 
 Files (argile-ui root):
-- `bindings/luajit/argile_ui_lj/widgets.lua`
+- `hosts/luajit/argile_ui_lj/widgets.lua`
 
 Acceptance:
 - toolkit users can create scrollable panels without manual clip wiring
@@ -485,7 +485,7 @@ Acceptance:
 #### K1-051: Migrate Love2D widget demo to `scroll_panel` where needed
 
 Files (argile-ui root):
-- `examples/love2d/demo_luajit_widgets/main.lua`
+- `platforms/love2d/luajit/demo_widgets/main.lua`
 
 Acceptance:
 - small-height windows remain usable without hiding large UI sections
@@ -525,7 +525,7 @@ Scope:
 
 Files:
 - `bindings/luajit/argile_lj/runtime.lua`
-- `bindings/luajit/argile_ui_lj/runtime.lua` (forwarder)
+- `hosts/luajit/argile_ui_lj/runtime.lua` (forwarder)
 
 Acceptance:
 - demo/debug code avoids repeated ID conversion boilerplate
@@ -547,7 +547,7 @@ Scope:
 - common two-pane layouts without manual width arithmetic
 
 Files (argile-ui root):
-- `bindings/luajit/argile_ui_lj/widgets.lua`
+- `hosts/luajit/argile_ui_lj/widgets.lua`
 
 Acceptance:
 - demo panes can be authored via split helper instead of custom width math
@@ -558,7 +558,7 @@ Scope:
 - helper that switches row/col based on width threshold
 
 Files (argile-ui root):
-- `bindings/luajit/argile_ui_lj/widgets.lua`
+- `hosts/luajit/argile_ui_lj/widgets.lua`
 
 Acceptance:
 - common row->col fallback logic is centralized
@@ -570,7 +570,7 @@ Scope:
 - possible helper on `label()`/`panel()` for "fill-width wrapped text"
 
 Files (argile-ui root):
-- `bindings/luajit/argile_ui_lj/widgets.lua`
+- `hosts/luajit/argile_ui_lj/widgets.lua`
 
 Acceptance:
 - widget demos visibly reduce repeated wrap-width arithmetic
@@ -578,7 +578,7 @@ Acceptance:
 #### K2-023: Refactor widget demo to use new helpers
 
 Files (argile-ui root):
-- `examples/love2d/demo_luajit_widgets/main.lua`
+- `platforms/love2d/luajit/demo_widgets/main.lua`
 
 Acceptance:
 - demo code becomes simpler and more declarative than current patched version
@@ -687,7 +687,7 @@ Acceptance:
 #### K3-020: Add `row_wrap` helper in `argile-ui`
 
 Files (argile-ui root):
-- `bindings/luajit/argile_ui_lj/widgets.lua`
+- `hosts/luajit/argile_ui_lj/widgets.lua`
 
 Acceptance:
 - toolkit exposes wrap container ergonomically
@@ -700,7 +700,7 @@ Candidate uses:
 - action tiles
 
 Files:
-- `examples/love2d/demo_luajit_widgets/main.lua` (argile-ui root)
+- `platforms/love2d/luajit/demo_widgets/main.lua` (argile-ui root)
 - optionally `backends/love2d/demo_ffi/main.lua` (engine demo)
 
 Acceptance:
@@ -889,7 +889,7 @@ Scope:
 - ergonomic widget-level grid container and item span helpers
 
 Files (argile-ui root):
-- `bindings/luajit/argile_ui_lj/widgets.lua`
+- `hosts/luajit/argile_ui_lj/widgets.lua`
 
 Acceptance:
 - dashboard-like demo layouts no longer require manual width splitting
@@ -902,7 +902,7 @@ Candidates:
 - diagnostics panel stack (if desired)
 
 Files (argile-ui root):
-- `examples/love2d/demo_luajit_widgets/main.lua`
+- `platforms/love2d/luajit/demo_widgets/main.lua`
 
 Acceptance:
 - demo remains readable at varying window sizes with less custom breakpoint math
@@ -969,7 +969,7 @@ Commands (typical):
 Keep at least one engine-level and one toolkit-level demo current:
 
 - `argile/backends/love2d/demo_ffi/` (engine integration reference)
-- `argile-ui/examples/love2d/demo_luajit_widgets/` (toolkit ergonomics proving ground)
+- `argile-ui/platforms/love2d/luajit/demo_widgets/` (toolkit ergonomics proving ground)
 
 ### X4: Regression Capture Discipline
 

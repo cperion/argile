@@ -67,10 +67,10 @@ The engine binding is the foundation; downstream bindings extend it.
 
 Recommended names:
 
-- `bindings.luajit.argile_ui_lj.init`
-- `bindings.luajit.argile_ui_lj.widgets`
-- `bindings.luajit.argile_ui_lj.theme`
-- `bindings.luajit.argile_ui_lj.dsl` (optional)
+- `hosts.luajit.argile_ui_lj.init`
+- `hosts.luajit.argile_ui_lj.widgets`
+- `hosts.luajit.argile_ui_lj.theme`
+- `hosts.luajit.argile_ui_lj.dsl` (optional)
 
 The widget layer should either:
 
@@ -178,8 +178,8 @@ Example shape:
 -- argile-ui side
 local M = {}
 M.argile = require("bindings.luajit.argile_lj")
-M.widgets = require("bindings.luajit.argile_ui_lj.widgets")
-M.theme = require("bindings.luajit.argile_ui_lj.theme")
+M.widgets = require("hosts.luajit.argile_ui_lj.widgets")
+M.theme = require("hosts.luajit.argile_ui_lj.theme")
 return M
 ```
 
