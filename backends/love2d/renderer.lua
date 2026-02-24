@@ -12,6 +12,7 @@ renderer.dispatcher = dispatcher
 
 local state = {
     font_cache = {},
+    image_registry = {},
     scissor_stack = {},
     base_scissor = nil,
     saved = nil,
@@ -43,6 +44,20 @@ local function copy_table_shallow(t)
     local out = {}
     for k, v in pairs(t) do out[k] = v end
     return out
+end
+
+local function ptr_key(ptr)
+    if ptr == nil then return nil end
+    local tv = type(ptr)
+    if tv == "number" then
+        return ("n:%s"):format(tostring(ptr))
+    end
+    if tv == "string" then
+        return ("s:%s"):format(ptr)
+    end
+    -- LuaJIT cdata (e.g. void*) stringifies to an address-bearing token and is
+    -- stable enough for process-local registry keys.
+    return ("c:%s"):format(tostring(ptr))
 end
 
 local function clamp_nonnegative(v)
@@ -333,6 +348,120 @@ local function draw_filled_rounded_rect(bb, color, cr)
     lg.rectangle("fill", bb.x, bb.y, bb.w, bb.h, r, r)
 end
 
+local function drawable_dimensions(drawable, quad)
+    if drawable == nil then return nil, nil end
+    if quad ~= nil and quad.getViewport ~= nil then
+        local ok, _, _, w, h = pcall(quad.getViewport, quad)
+        if ok and w ~= nil and h ~= nil then
+            return tonumber(w) or 0, tonumber(h) or 0
+        end
+    end
+    if drawable.getDimensions ~= nil then
+        local ok, w, h = pcall(drawable.getDimensions, drawable)
+        if ok and w ~= nil and h ~= nil then
+            return tonumber(w) or 0, tonumber(h) or 0
+        end
+    end
+    if drawable.getWidth ~= nil and drawable.getHeight ~= nil then
+        local ok_w, w = pcall(drawable.getWidth, drawable)
+        local ok_h, h = pcall(drawable.getHeight, drawable)
+        if ok_w and ok_h and w ~= nil and h ~= nil then
+            return tonumber(w) or 0, tonumber(h) or 0
+        end
+    end
+    return nil, nil
+end
+
+local function compute_image_draw_transform(bb, src_w, src_h, mode)
+    if src_w == nil or src_h == nil or src_w <= 0 or src_h <= 0 then
+        return bb.x, bb.y, 0, 0
+    end
+    mode = mode or "stretch"
+    if mode == "stretch" then
+        return bb.x, bb.y, bb.w / src_w, bb.h / src_h
+    end
+
+    if mode == "center" then
+        local x = bb.x + math.floor((bb.w - src_w) * 0.5 + 0.5)
+        local y = bb.y + math.floor((bb.h - src_h) * 0.5 + 0.5)
+        return x, y, 1, 1
+    end
+
+    local sx = bb.w / src_w
+    local sy = bb.h / src_h
+    local s = (mode == "cover") and math.max(sx, sy) or math.min(sx, sy)
+    if not (s > 0) then s = 1 end
+    local dw = src_w * s
+    local dh = src_h * s
+    local x = bb.x + (bb.w - dw) * 0.5
+    local y = bb.y + (bb.h - dh) * 0.5
+    return x, y, s, s
+end
+
+local function draw_registered_image_entry(entry, cmd, bb)
+    if entry == nil then return false end
+
+    if type(entry) == "function" then
+        return entry(cmd, renderer) == true
+    end
+
+    if type(entry) == "table" and type(entry.draw) == "function" then
+        return entry.draw(cmd, renderer, entry) == true
+    end
+
+    local drawable = entry
+    local quad = nil
+    local mode = "stretch"
+    local tint = nil
+    local bg = nil
+    local ox, oy = 0, 0
+    local rot = 0
+
+    if type(entry) == "table" then
+        drawable = entry.drawable or entry.image or entry.texture or entry[1]
+        quad = entry.quad
+        mode = entry.mode or mode
+        tint = entry.color or entry.tint
+        bg = entry.backgroundColor or entry.background or entry.bg
+        ox = entry.ox or 0
+        oy = entry.oy or 0
+        rot = entry.rotation or entry.rot or 0
+    end
+
+    if drawable == nil then return false end
+
+    if bg ~= nil then
+        draw_filled_rounded_rect(bb, bg, cmd.renderData.image.cornerRadius)
+    end
+
+    local src_w, src_h = drawable_dimensions(drawable, quad)
+    if src_w == nil or src_h == nil or src_w <= 0 or src_h <= 0 then
+        return false
+    end
+
+    local x, y, sx, sy = compute_image_draw_transform(bb, src_w, src_h, mode)
+    if tint ~= nil then
+        cache_set_color(tint)
+    else
+        cache_set_color({ r = 1, g = 1, b = 1, a = 1 })
+    end
+
+    if quad ~= nil then
+        lg.draw(drawable, quad, x, y, rot, sx, sy, ox, oy)
+    else
+        lg.draw(drawable, x, y, rot, sx, sy, ox, oy)
+    end
+    return true
+end
+
+local function lookup_registered_image(cmd)
+    local d = cmd.renderData.image
+    if d == nil then return nil end
+    local key = ptr_key(d.imageData)
+    if key == nil then return nil end
+    return state.image_registry[key]
+end
+
 local function draw_border_uniform(cmd, b, bb)
     local w_left = tonumber(b.width.left) or 0
     if w_left <= 0 then return end
@@ -405,6 +534,26 @@ function renderer.reset_caches()
     reset_runtime_caches()
 end
 
+function renderer.register_image(image_data_key, entry)
+    local key = ptr_key(image_data_key)
+    assert(key ~= nil, "register_image requires a non-nil image key/pointer")
+    state.image_registry[key] = entry
+    return renderer
+end
+
+function renderer.unregister_image(image_data_key)
+    local key = ptr_key(image_data_key)
+    if key ~= nil then
+        state.image_registry[key] = nil
+    end
+    return renderer
+end
+
+function renderer.clear_image_registry()
+    state.image_registry = {}
+    return renderer
+end
+
 function renderer.begin_frame()
     state.scissor_stack = {}
     state.base_scissor = nil
@@ -471,11 +620,15 @@ function renderer.draw_image(cmd)
         return
     end
 
-    -- Generic fallback: draw the backgroundColor and let host apps install an
-    -- image hook when they can map imageData pointers to LÖVE drawables.
     local bb = get_bbox(cmd)
     if bb.w <= 0 or bb.h <= 0 then return end
     local d = cmd.renderData.image
+    if draw_registered_image_entry(lookup_registered_image(cmd), cmd, bb) then
+        return
+    end
+
+    -- Generic fallback: draw the backgroundColor and let host apps install an
+    -- image hook / registry binding when they can map imageData pointers.
     draw_filled_rounded_rect(bb, d.backgroundColor, d.cornerRadius)
 end
 
