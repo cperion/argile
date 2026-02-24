@@ -1792,6 +1792,7 @@ terra ui.MinMemorySize() : uint64
     total = total + uint64(maxElements) * uint64(sizeof(layout.LayoutElementTreeNode)); allocations = allocations + 1
     total = total + uint64(maxElements) * uint64(sizeof(string_mod.String)); allocations = allocations + 1
     total = total + uint64(maxElements) * uint64(sizeof(layout.ScrollContainerDataInternal)); allocations = allocations + 1
+    total = total + uint64(maxElements) * uint64(sizeof(HoverBinding)); allocations = allocations + 1
     total = total + uint64(maxElements) * uint64(sizeof(layout.MeasureTextCacheItem)); allocations = allocations + 1
     total = total + uint64(maxElements) * uint64(sizeof(int32)); allocations = allocations + 1
     var hashBuckets = maxElements

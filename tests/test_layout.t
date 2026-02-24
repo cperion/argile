@@ -1495,6 +1495,42 @@ terra test_api_coverage_smoke()
     return 1
 end
 
+terra test_min_memory_size_is_sufficient_for_initialize()
+    -- MinMemorySize() is part of the C ABI and is commonly used by FFI callers to size
+    -- an arena before the first context is initialized.
+    ui.SetCurrentContext(nil)
+
+    var minMem = ui.MinMemorySize()
+    if minMem == 0 then
+        C.printf("test_min_memory_size_is_sufficient_for_initialize: FAIL (minMem == 0)\n")
+        return 1
+    end
+
+    var arena: ui.Arena
+    arena.nextAllocation = 0
+    arena.capacity = minMem
+    arena.memory = [&int8](C.malloc(minMem))
+    if arena.memory == nil then
+        C.printf("test_min_memory_size_is_sufficient_for_initialize: FAIL (malloc)\n")
+        return 1
+    end
+
+    var dims: ui.Dimensions
+    dims.width = 320
+    dims.height = 240
+    var ctx = ui.Initialize(arena, dims)
+
+    C.free(arena.memory)
+
+    if ctx == nil then
+        C.printf("test_min_memory_size_is_sufficient_for_initialize: FAIL (Initialize)\n")
+        return 1
+    end
+
+    C.printf("test_min_memory_size_is_sufficient_for_initialize: PASS\n")
+    return 0
+end
+
 local advancedFailures = 0
 advancedFailures = advancedFailures + test_measure_text_callback()
 advancedFailures = advancedFailures + test_measure_text_cache_hit_and_reset()
@@ -1504,6 +1540,7 @@ advancedFailures = advancedFailures + test_scroll_momentum_state()
 advancedFailures = advancedFailures + test_hover_and_element_data()
 advancedFailures = advancedFailures + test_disable_culling_toggle()
 advancedFailures = advancedFailures + test_api_coverage_smoke()
+advancedFailures = advancedFailures + test_min_memory_size_is_sufficient_for_initialize()
 if advancedFailures == 0 then
     print("Advanced features: PASS")
 else

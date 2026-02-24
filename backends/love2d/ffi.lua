@@ -2,23 +2,19 @@
 -- Loads libargile.so and provides utility functions
 
 local ffi = require("ffi")
+local runtime = require("bindings.luajit.argile_lj.runtime")
 
 local argile_ffi = {}
 
--- Load FFI definitions
-local function load_ffi_definitions()
-    dofile("build/argile_api_ffi.lua")
-end
-
--- Load the shared library
-local function load_library()
-    return ffi.load("build/libargile.so")
-end
-
 -- Initialize and return the loaded library
 function argile_ffi.init()
-    load_ffi_definitions()
-    local lib = load_library()
+    local client = runtime.load({
+        ffi_def_path = "build/argile_api_ffi.lua",
+        lib_path = "build/libargile.so",
+    })
+    local lib = client.lib
+    argile_ffi.runtime_client = client
+    argile_ffi.lib = lib
     
     -- Add C standard library functions we need
     ffi.cdef[[
@@ -40,10 +36,7 @@ end
 
 -- StringSlice to Lua string
 function argile_ffi.slice_to_string(slice)
-    if slice == nil or slice.chars == nil or slice.length <= 0 then
-        return ""
-    end
-    return ffi.string(slice.chars, tonumber(slice.length))
+    return runtime.slice_to_string(slice)
 end
 
 -- Element ID from string

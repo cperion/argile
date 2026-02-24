@@ -1,0 +1,59 @@
+# LuaJIT Reference Integration (`argile_lj`)
+
+This directory contains the official LuaJIT reference integration for Argile.
+
+Current goals:
+- Prove the runtime `ui.capi` FFI surface works well from pure LuaJIT
+- Reuse the canonical Argile AST definitions from `src/lang/ast.t`
+- Provide a LuaJIT-native DSL wrapper (table/metatable style) that builds canonical AST tables
+- Keep the compiler boundary explicit (`ui.capi` runtime-only today; host compiler APIs are not exported yet)
+
+## Modules
+
+- `bindings.luajit.argile_lj.runtime`
+  - Loads `build/argile_api_ffi.lua` and `build/libargile.so`
+  - Provides context creation helpers and runtime callback registration
+  - Includes a LuaJIT-friendly fallback context init path (`InitializeContext`) if needed
+
+- `bindings.luajit.argile_lj.ast`
+  - Reuses the canonical AST module (`src/lang/ast.t`) directly
+  - Adds `validate_portable(program)` to flag host-only nodes (`LuaExpr`, `Splice`)
+
+- `bindings.luajit.argile_lj.dsl`
+  - LuaJIT-native AST builders over the canonical AST
+  - Focused on semantic parity (not Terra parser syntax parity)
+
+- `bindings.luajit.argile_lj.compiler`
+  - Detects whether host compiler/callback backend exports are present in the loaded `.so`
+  - Explicitly reports the current runtime-only boundary
+
+## What Works Today (Pure LuaJIT FFI)
+
+- Runtime `ui.capi` usage (`BeginLayout`, `FinalizeLayout`, `OpenTextElement*`, render command inspection)
+- Runtime callback interop (`SetMeasureTextFunction*`) including callback invocation during real layout
+- Text measurement cache behavior (callback miss/hit/reset) via FFI
+- Canonical AST reuse and LuaJIT AST/DSL construction (host-language frontend side)
+
+## What Is Not Available From `ui.capi` Today
+
+- `CapiDslAstHost*` compiler context/cache APIs
+- `CapiDslAstHostCallback*` callback backend helper APIs
+
+Those APIs are host-side Terra/Lua integration surfaces and are not exported in the runtime `ui.capi` shared-library ABI yet.
+
+## Probe / Example
+
+Run the current probe:
+
+```sh
+cd argile
+luajit tools/experiment_luajit_ffi_surface_probe.lua
+```
+
+The probe now validates:
+- runtime symbol availability
+- real callback invocation during layout
+- text measurement cache behavior
+- canonical AST reuse from LuaJIT
+- LuaJIT DSL wrapper -> portable AST validation
+- host compiler export detection (expected missing in `ui.capi`)

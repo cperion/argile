@@ -36,6 +36,15 @@ For official bindings (including LuaJIT FFI), the recommended near-term shipping
 
 This keeps one artifact for users while preserving the real execution-phase boundary.
 
+Repository reference implementation (LuaJIT):
+
+- `bindings/luajit/argile_lj/runtime.lua` (runtime `ui.capi` FFI wrapper)
+- `bindings/luajit/argile_lj/ast.lua` (canonical AST reuse from `src/lang/ast.t`)
+- `bindings/luajit/argile_lj/dsl.lua` (LuaJIT-native AST/DSL builders)
+- `bindings/luajit/argile_lj/compiler.lua` (host compiler export detection / boundary reporting)
+- `bindings/luajit/README.md` (package-level guide)
+- `tools/experiment_luajit_ffi_surface_probe.lua` (runtime + callback + AST/DSL probe)
+
 Important:
 
 - the compiler-host ABI is not the same thing as `ui.capi`
