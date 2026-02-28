@@ -101,7 +101,14 @@ local function walk_type(t, by_value, seen, want_forward, want_complete)
             local s = struct_name(base)
             want_forward[s] = base
             local nested_seen = {}
-            walk_type(base, false, nested_seen, want_forward, want_complete)
+            if s == "Context" then
+                -- Keep Context opaque in generated C/FFI surface.
+                walk_type(base, false, nested_seen, want_forward, want_complete)
+            else
+                -- Pointer parameters can still require complete layouts when they
+                -- contain by-value nested structs (for example ElementDesc).
+                walk_type(base, true, nested_seen, want_forward, want_complete)
+            end
         elseif base:isfunction() then
             local nested_seen = {}
             walk_type(base.returntype, true, nested_seen, want_forward, want_complete)

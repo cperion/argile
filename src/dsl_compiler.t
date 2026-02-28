@@ -421,7 +421,8 @@ local function compilePaintConfig(paint_ops)
         var cfg : ui.PaintConfig
         cfg.ops = ops
         cfg.count = [count_t]
-        ui.AttachPaintConfig(cfg)
+    in
+        cfg
     end
 end
 
@@ -1098,51 +1099,29 @@ compile_dsl_node = function(dsl_node, env_fn, registry, fills_by_slot, inherited
     local elem_id_var = nil
     local id_value = dsl_node.id_expr and AST.EvalExpr(dsl_node.id_expr, env_fn) or nil
     
-    local function emit_id_init_and_maybe_open(open_element)
+    local function emit_id_init()
         if id_value == nil then
-            if open_element then
-                stmts:insert(quote ui.OpenElement() end)
-            end
             return
         end
 
         if type(id_value) == "string" then
             elem_id_var = symbol(ui.ElementId, "elem_id")
-            if open_element then
-                stmts:insert(quote
-                    var id_str = ui.String {
-                        isStaticallyAllocated = true,
-                        length = [#id_value],
-                        chars = [id_value]
-                    }
-                    var [elem_id_var] = ui.GetElementId(id_str)
-                    ui.OpenElementWithId([elem_id_var])
-                end)
-            else
-                stmts:insert(quote
-                    var id_str = ui.String {
-                        isStaticallyAllocated = true,
-                        length = [#id_value],
-                        chars = [id_value]
-                    }
-                    var [elem_id_var] = ui.GetElementId(id_str)
-                end)
-            end
+            stmts:insert(quote
+                var id_str = ui.String {
+                    isStaticallyAllocated = true,
+                    length = [#id_value],
+                    chars = [id_value]
+                }
+                var [elem_id_var] = ui.GetElementId(id_str)
+            end)
             return
         end
 
         if type(id_value) == "number" then
             elem_id_var = symbol(ui.ElementId, "elem_id")
-            if open_element then
-                stmts:insert(quote
-                    var [elem_id_var] = ui.HashNumber([id_value], 0)
-                    ui.OpenElementWithId([elem_id_var])
-                end)
-            else
-                stmts:insert(quote
-                    var [elem_id_var] = ui.HashNumber([id_value], 0)
-                end)
-            end
+            stmts:insert(quote
+                var [elem_id_var] = ui.HashNumber([id_value], 0)
+            end)
             return
         end
 
@@ -1151,137 +1130,140 @@ compile_dsl_node = function(dsl_node, env_fn, registry, fills_by_slot, inherited
             elem_id_var = symbol(ui.ElementId, "elem_id")
 
             if t:isintegral() then
-                if open_element then
-                    stmts:insert(quote
-                        var [elem_id_var] = ui.HashNumber([id_value], 0)
-                        ui.OpenElementWithId([elem_id_var])
-                    end)
-                else
-                    stmts:insert(quote
-                        var [elem_id_var] = ui.HashNumber([id_value], 0)
-                    end)
-                end
+                stmts:insert(quote
+                    var [elem_id_var] = ui.HashNumber([id_value], 0)
+                end)
             elseif t == rawstring or t == &int8 then
                 local C = terralib.includec("string.h")
-                if open_element then
-                    stmts:insert(quote
-                        var str_val = [id_value]
-                        var id_str = ui.String {
-                            isStaticallyAllocated = false,
-                            length = C.strlen(str_val),
-                            chars = str_val
-                        }
-                        var [elem_id_var] = ui.GetElementId(id_str)
-                        ui.OpenElementWithId([elem_id_var])
-                    end)
-                else
-                    stmts:insert(quote
-                        var str_val = [id_value]
-                        var id_str = ui.String {
-                            isStaticallyAllocated = false,
-                            length = C.strlen(str_val),
-                            chars = str_val
-                        }
-                        var [elem_id_var] = ui.GetElementId(id_str)
-                    end)
-                end
+                stmts:insert(quote
+                    var str_val = [id_value]
+                    var id_str = ui.String {
+                        isStaticallyAllocated = false,
+                        length = C.strlen(str_val),
+                        chars = str_val
+                    }
+                    var [elem_id_var] = ui.GetElementId(id_str)
+                end)
             elseif t == ui.ElementId then
-                if open_element then
-                    stmts:insert(quote
-                        var [elem_id_var] = [id_value]
-                        ui.OpenElementWithId([elem_id_var])
-                    end)
-                else
-                    stmts:insert(quote
-                        var [elem_id_var] = [id_value]
-                    end)
-                end
+                stmts:insert(quote
+                    var [elem_id_var] = [id_value]
+                end)
             else
                 error("argile: Unsupported dynamic ID type: " .. tostring(t))
             end
             return
         end
-
-        if open_element then
-            stmts:insert(quote ui.OpenElement() end)
-        end
     end
 
-    emit_id_init_and_maybe_open(not is_text)
+    emit_id_init()
     
     local has_runtime_state_overlays = #runtime_state_names > 0 and (elem_id_var ~= nil)
-    
-    if resolved.layout then
-        stmts:insert(quote ui.SetOpenElementLayoutConfig([compileLayoutConfig(resolved.layout)]) end)
-    end
-    
+
     if has_runtime_state_overlays then
         state_combos = {}
         state_combo_count = 2 ^ #runtime_state_names
-        
+
         for mask = 0, state_combo_count - 1 do
             local merged = merge_states_for_mask(resolved, runtime_state_names, mask, env_fn)
             state_combos[mask] = {
                 shared_cfg = merged.shared and compileSharedConfig(merged.shared) or nil,
                 border_cfg = merged.border and compileBorderConfig(merged.border) or nil,
-                paint_stmt = merged.paint and compilePaintConfig(merged.paint) or nil,
+                paint_cfg = merged.paint and compilePaintConfig(merged.paint) or nil,
                 text_config = merged.textConfig,
             }
         end
-        
+
         state_mask_var = symbol(uint8, "state_mask")
         stmts:insert(emit_state_mask_compute(state_mask_var, runtime_state_names, elem_id_var))
-        
-        local visual_dispatch = emit_state_mask_dispatch(state_mask_var, state_combo_count, function(mask)
-            local combo = state_combos[mask]
-            local branch = terralib.newlist()
-            if combo.shared_cfg then
-                branch:insert(quote ui.AttachSharedConfig([combo.shared_cfg]) end)
-            end
-            if combo.border_cfg then
-                branch:insert(quote ui.AttachBorderConfig([combo.border_cfg]) end)
-            end
-            return branch
+    end
+
+    local function emit_open_with_desc(shared_cfg, border_cfg, paint_cfg)
+        local open_stmts = terralib.newlist()
+        local desc_var = symbol(ui.ElementDesc, "elem_desc")
+
+        open_stmts:insert(quote
+            var [desc_var]
+            [desc_var].flags = 0
         end)
-        if visual_dispatch then stmts:insert(visual_dispatch) end
-    else
-        if resolved.shared then
-            stmts:insert(quote ui.AttachSharedConfig([compileSharedConfig(resolved.shared)]) end)
+
+        if resolved.layout then
+            open_stmts:insert(quote
+                [desc_var].layout = [compileLayoutConfig(resolved.layout)]
+                [desc_var].flags = [desc_var].flags or ui.DESC_HAS_LAYOUT
+            end)
         end
-        if resolved.border then
-            stmts:insert(quote ui.AttachBorderConfig([compileBorderConfig(resolved.border)]) end)
+        if shared_cfg then
+            open_stmts:insert(quote
+                [desc_var].shared = [shared_cfg]
+                [desc_var].flags = [desc_var].flags or ui.DESC_HAS_SHARED
+            end)
         end
+        if border_cfg then
+            open_stmts:insert(quote
+                [desc_var].border = [border_cfg]
+                [desc_var].flags = [desc_var].flags or ui.DESC_HAS_BORDER
+            end)
+        end
+        if resolved.clip then
+            open_stmts:insert(quote
+                [desc_var].clip = [compileClipConfig(resolved.clip)]
+                [desc_var].flags = [desc_var].flags or ui.DESC_HAS_CLIP
+            end)
+        end
+        if resolved.aspect then
+            open_stmts:insert(quote
+                [desc_var].aspect = [compileAspectConfig(resolved.aspect)]
+                [desc_var].flags = [desc_var].flags or ui.DESC_HAS_ASPECT
+            end)
+        end
+        if resolved.image then
+            open_stmts:insert(quote
+                [desc_var].image = [compileImageConfig(resolved.image)]
+                [desc_var].flags = [desc_var].flags or ui.DESC_HAS_IMAGE
+            end)
+        end
+        if resolved.custom then
+            open_stmts:insert(quote
+                [desc_var].custom = [compileCustomConfig(resolved.custom)]
+                [desc_var].flags = [desc_var].flags or ui.DESC_HAS_CUSTOM
+            end)
+        end
+        if resolved.floating then
+            open_stmts:insert(quote
+                [desc_var].floating = [compileFloatingConfig(resolved.floating)]
+                [desc_var].flags = [desc_var].flags or ui.DESC_HAS_FLOATING
+            end)
+        end
+        if paint_cfg then
+            open_stmts:insert(quote
+                [desc_var].paint = [paint_cfg]
+                [desc_var].flags = [desc_var].flags or ui.DESC_HAS_PAINT
+            end)
+        end
+
+        if elem_id_var then
+            open_stmts:insert(quote ui.OpenElementWithIdAndDesc([elem_id_var], &[desc_var]) end)
+        else
+            open_stmts:insert(quote ui.OpenElementWithDesc(&[desc_var]) end)
+        end
+        return quote [open_stmts] end
     end
-    
-    if resolved.clip then
-        stmts:insert(quote ui.AttachClipConfig([compileClipConfig(resolved.clip)]) end)
-    end
-    if resolved.aspect then
-        stmts:insert(quote ui.AttachAspectRatioConfig([compileAspectConfig(resolved.aspect)]) end)
-    end
-    if resolved.image then
-        stmts:insert(quote ui.AttachImageConfig([compileImageConfig(resolved.image)]) end)
-    end
-    if resolved.custom then
-        stmts:insert(quote ui.AttachCustomConfig([compileCustomConfig(resolved.custom)]) end)
-    end
-    if resolved.floating then
-        stmts:insert(quote ui.AttachFloatingConfig([compileFloatingConfig(resolved.floating)]) end)
-    end
-    
-    if has_runtime_state_overlays then
-        local paint_dispatch = emit_state_mask_dispatch(state_mask_var, state_combo_count, function(mask)
-            local combo = state_combos[mask]
-            local branch = terralib.newlist()
-            if combo.paint_stmt then
-                branch:insert(combo.paint_stmt)
-            end
-            return branch
-        end)
-        if paint_dispatch then stmts:insert(paint_dispatch) end
-    elseif resolved.paint then
-        local paint_stmt = compilePaintConfig(resolved.paint)
-        if paint_stmt then stmts:insert(paint_stmt) end
+
+    if not is_text then
+        if has_runtime_state_overlays then
+            local open_dispatch = emit_state_mask_dispatch(state_mask_var, state_combo_count, function(mask)
+                local combo = state_combos[mask]
+                local branch = terralib.newlist()
+                branch:insert(emit_open_with_desc(combo.shared_cfg, combo.border_cfg, combo.paint_cfg))
+                return branch
+            end)
+            if open_dispatch then stmts:insert(open_dispatch) end
+        else
+            local shared_cfg = resolved.shared and compileSharedConfig(resolved.shared) or nil
+            local border_cfg = resolved.border and compileBorderConfig(resolved.border) or nil
+            local paint_cfg = resolved.paint and compilePaintConfig(resolved.paint) or nil
+            stmts:insert(emit_open_with_desc(shared_cfg, border_cfg, paint_cfg))
+        end
     end
     
     local text_value = dsl_node.text_expr and AST.EvalExpr(dsl_node.text_expr, env_fn) or nil

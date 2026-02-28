@@ -7,6 +7,18 @@ local ui = require("src.init")
 
 print("=== Layout Engine Test ===")
 
+terra open_empty()
+    var desc: ui.ElementDesc
+    desc.flags = 0
+    ui.OpenElementWithDesc(&desc)
+end
+
+terra open_empty_with_id(id: ui.ElementId)
+    var desc: ui.ElementDesc
+    desc.flags = 0
+    ui.OpenElementWithIdAndDesc(id, &desc)
+end
+
 terra test_basic_layout()
     var arena: ui.Arena
     arena.nextAllocation = 0
@@ -25,7 +37,7 @@ terra test_basic_layout()
     
     ui.BeginLayout(800.0, 600.0)
     
-    ui.OpenElement()
+    open_empty()
     var childCfg: ui.LayoutConfig
     childCfg.sizing.width.type = ui.SIZING_FIXED
     childCfg.sizing.width.size.min = 200.0
@@ -127,7 +139,7 @@ terra test_border_rendering()
     
     ui.BeginLayout(800.0, 600.0)
     
-    ui.OpenElement()
+    open_empty()
     var childCfg: ui.LayoutConfig
     childCfg.sizing.width.type = ui.SIZING_FIXED
     childCfg.sizing.width.size.min = 200.0
@@ -245,7 +257,7 @@ terra test_all_render_commands()
     ui.BeginLayout(800.0, 600.0)
     
     -- Child 1: Image element
-    ui.OpenElement()
+    open_empty()
     var imgCfg: ui.LayoutConfig
     imgCfg.sizing.width.type = ui.SIZING_FIXED
     imgCfg.sizing.width.size.min = 100.0
@@ -279,7 +291,7 @@ terra test_all_render_commands()
     ui.CloseElement()
     
     -- Child 2: Custom element
-    ui.OpenElement()
+    open_empty()
     var customCfg: ui.LayoutConfig
     customCfg.sizing.width.type = ui.SIZING_FIXED
     customCfg.sizing.width.size.min = 100.0
@@ -313,7 +325,7 @@ terra test_all_render_commands()
     ui.CloseElement()
     
     -- Child 3: Clip element with children (and border)
-    ui.OpenElement()
+    open_empty()
     var clipCfg: ui.LayoutConfig
     clipCfg.sizing.width.type = ui.SIZING_FIXED
     clipCfg.sizing.width.size.min = 200.0
@@ -367,7 +379,7 @@ terra test_all_render_commands()
         end
         
         -- Nested child inside clip
-        ui.OpenElement()
+        open_empty()
         var nestedCfg: ui.LayoutConfig
         nestedCfg.sizing.width.type = ui.SIZING_FIXED
         nestedCfg.sizing.width.size.min = 50.0
@@ -755,6 +767,67 @@ terra test_measure_text_callback()
     return 1
 end
 
+terra test_text_words_wrap_under_root_compression()
+    var arena: ui.Arena
+    arena.nextAllocation = 0
+    arena.capacity = 1024 * 1024
+    arena.memory = [&int8](C.malloc([uint64](arena.capacity)))
+
+    var ctx: ui.Context
+    ui.SetCurrentContext(&ctx)
+    if not ctx:initialize(&arena, 128) then
+        C.printf("test_text_words_wrap_under_root_compression: FAIL (init)\n")
+        C.free(arena.memory)
+        return 1
+    end
+
+    ui.SetMeasureTextFunction(mock_measure_text, nil)
+    ui.BeginLayout(400.0, 200.0)
+
+    var t: ui.String
+    t.isStaticallyAllocated = true
+    t.length = 11
+    t.chars = "hello world"
+
+    var tc: ui.TextConfig
+    tc.userData = nil
+    tc.textColor.r = 255
+    tc.textColor.g = 255
+    tc.textColor.b = 255
+    tc.textColor.a = 255
+    tc.fontId = 0
+    tc.fontSize = 16
+    tc.letterSpacing = 0
+    tc.lineHeight = 16
+    tc.wrapMode = ui.TEXT_WRAP_WORDS
+    tc.textAlignment = ui.TEXT_ALIGN_LEFT
+
+    var i = 0
+    while i < 5 do
+        ui.OpenTextElement(t, &tc)
+        i = i + 1
+    end
+    var cmds = ui.EndLayout()
+
+    var textCmds = 0
+    if cmds ~= nil then
+        for i = 0, cmds.length do
+            var cmd = cmds:get(i)
+            if cmd ~= nil and cmd.commandType == ui.RENDER_TEXT then
+                textCmds = textCmds + 1
+            end
+        end
+    end
+
+    C.free(arena.memory)
+    if textCmds == 10 then
+        C.printf("test_text_words_wrap_under_root_compression: PASS\n")
+        return 0
+    end
+    C.printf("test_text_words_wrap_under_root_compression: FAIL (text commands=%d)\n", textCmds)
+    return 1
+end
+
 terra test_aspect_ratio_layout()
     var arena: ui.Arena
     arena.nextAllocation = 0
@@ -769,7 +842,7 @@ terra test_aspect_ratio_layout()
     end
 
     ui.BeginLayout(400.0, 300.0)
-    ui.OpenElement()
+    open_empty()
     var e = ctx:getOpenLayoutElement()
     var targetId: uint32 = 0
     if e ~= nil then
@@ -854,7 +927,7 @@ terra test_floating_attach_points()
     end
 
     ui.BeginLayout(800.0, 600.0)
-    ui.OpenElement()
+    open_empty()
     var floatingId: uint32 = 0
     var e = ctx:getOpenLayoutElement()
     if e ~= nil then
@@ -950,7 +1023,7 @@ terra test_scroll_momentum_state()
 
     ui.BeginLayout(400.0, 300.0)
     var sid = ui.HashString(ui.String { isStaticallyAllocated = true, length = 6, chars = "scroll" }, 0)
-    ui.OpenElementWithId(sid)
+    open_empty_with_id(sid)
     var container = ctx:getOpenLayoutElement()
     if container ~= nil then
         var lc: ui.LayoutConfig
@@ -982,7 +1055,7 @@ terra test_scroll_momentum_state()
             ctx:attachElementConfig(cu, ui.CONFIG_CLIP)
         end
 
-        ui.OpenElement()
+        open_empty()
         var child = ctx:getOpenLayoutElement()
         if child ~= nil then
             var cc: ui.LayoutConfig
@@ -1089,7 +1162,7 @@ terra test_hover_and_element_data()
     var hid = ui.HashString(ui.String { isStaticallyAllocated = true, length = 9, chars = "hoverable" }, 0)
     
     ui.BeginLayout(200, 150)
-    ui.OpenElementWithId(hid)
+    open_empty_with_id(hid)
     var elem = ctx:getOpenLayoutElement()
     if elem ~= nil then
         var lc: ui.LayoutConfig
@@ -1155,7 +1228,7 @@ terra test_hover_and_element_data()
 end
 
 terra build_offscreen_floating(ctx: &ui.Context, id: ui.ElementId)
-    ui.OpenElementWithId(id)
+    open_empty_with_id(id)
     var elem = ctx:getOpenLayoutElement()
     if elem ~= nil then
         var lc: ui.LayoutConfig
@@ -1331,7 +1404,7 @@ terra test_api_coverage_smoke()
 
     -- Trigger percentage-over-1 error callback while keeping layout valid.
     ui.BeginLayout(220, 120)
-    ui.OpenElement()
+    open_empty()
     var errElem = ctx:getOpenLayoutElement()
     if errElem ~= nil then
         var ec: ui.LayoutConfig
@@ -1367,7 +1440,7 @@ terra test_api_coverage_smoke()
 
     hoverCurrentCallbackCount = 0
     ui.BeginLayout(220, 180)
-    ui.OpenElementWithId(idA)
+    open_empty_with_id(idA)
     var e = ctx:getOpenLayoutElement()
     if e ~= nil then
         var lc: ui.LayoutConfig
@@ -1409,7 +1482,7 @@ terra test_api_coverage_smoke()
 
         ui.OnHoverCurrent(hover_current_callback, nil)
 
-        ui.OpenElement()
+        open_empty()
         var child = ctx:getOpenLayoutElement()
         if child ~= nil then
             var cc: ui.LayoutConfig
@@ -1483,7 +1556,7 @@ terra test_api_coverage_smoke()
 
     -- GetScrollOffset on currently open clip container (fallback path via childOffset).
     ui.BeginLayout(100, 100)
-    ui.OpenElementWithId(idA)
+    open_empty_with_id(idA)
     var offElem = ctx:getOpenLayoutElement()
     if offElem ~= nil then
         var oc: ui.LayoutConfig
@@ -1523,7 +1596,7 @@ terra test_api_coverage_smoke()
 
     -- Basic overflow API surface smoke (maps to clip semantics in current M1 groundwork).
     ui.BeginLayout(64, 64)
-    ui.OpenElement()
+    open_empty()
     var overflowElem = ctx:getOpenLayoutElement()
     if overflowElem ~= nil then
         var olc: ui.LayoutConfig
@@ -1543,10 +1616,19 @@ terra test_api_coverage_smoke()
         olc.layoutDirection = ui.LEFT_TO_RIGHT
         overflowElem.layoutConfig = ctx:storeLayoutConfig(olc)
 
-        var ocfg: ui.OverflowConfig
-        ocfg.xMode = ui.OVERFLOW_CLIP
-        ocfg.yMode = ui.OVERFLOW_SCROLL
-        if not ui.AttachOverflowConfig(ocfg) then
+        var clip_from_overflow: ui.ClipConfig
+        clip_from_overflow.horizontal = true
+        clip_from_overflow.vertical = true
+        clip_from_overflow.childOffset.x = 0
+        clip_from_overflow.childOffset.y = 0
+        var clip_ptr = ctx:storeClipConfig(clip_from_overflow)
+        if clip_ptr ~= nil then
+            var cu2: ui.ElementConfigUnion
+            cu2.clipConfig = clip_ptr
+            if ctx:attachElementConfig(cu2, ui.CONFIG_CLIP) == nil then
+                ok = false
+            end
+        else
             ok = false
         end
     else
@@ -1609,6 +1691,7 @@ end
 
 local advancedFailures = 0
 advancedFailures = advancedFailures + test_measure_text_callback()
+advancedFailures = advancedFailures + test_text_words_wrap_under_root_compression()
 advancedFailures = advancedFailures + test_measure_text_cache_hit_and_reset()
 advancedFailures = advancedFailures + test_aspect_ratio_layout()
 advancedFailures = advancedFailures + test_floating_attach_points()

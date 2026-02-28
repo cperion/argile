@@ -195,6 +195,39 @@ function M:mk_overflow_config(opts)
     })
 end
 
+function M:mk_element_desc(opts)
+    opts = opts or {}
+    local lib = self.lib
+    local d = ffi.new("struct ElementDesc")
+    local flags = tonumber(opts.flags) or 0
+
+    local function assign(name, ctype, flag)
+        local v = opts[name]
+        if v == nil then return end
+        if type(v) == "cdata" then
+            d[name] = v
+        else
+            d[name] = ffi.new("struct " .. ctype, v)
+        end
+        if opts.flags == nil then
+            flags = flags + tonumber(flag)
+        end
+    end
+
+    assign("layout", "LayoutConfig", lib.DESC_HAS_LAYOUT)
+    assign("shared", "SharedConfig", lib.DESC_HAS_SHARED)
+    assign("border", "BorderConfig", lib.DESC_HAS_BORDER)
+    assign("clip", "ClipConfig", lib.DESC_HAS_CLIP)
+    assign("floating", "FloatingConfig", lib.DESC_HAS_FLOATING)
+    assign("aspect", "AspectRatioConfig", lib.DESC_HAS_ASPECT)
+    assign("image", "ImageConfig", lib.DESC_HAS_IMAGE)
+    assign("custom", "CustomConfig", lib.DESC_HAS_CUSTOM)
+    assign("paint", "PaintConfig", lib.DESC_HAS_PAINT)
+
+    d.flags = flags
+    return d
+end
+
 function M:create_context(opts)
     opts = opts or {}
     local lib = self.lib
@@ -316,24 +349,32 @@ function M.Context:get_element_scroll_offset(id_or_name)
     return vec2_to_table(data.scrollPosition[0])
 end
 
-function M.Context:attach_overflow_config(cfg_or_opts)
-    local cfg = cfg_or_opts
-    if type(cfg_or_opts) ~= "cdata" then
-        cfg = M.mk_overflow_config(self, cfg_or_opts or {})
-    end
-    self:set_current()
-    if has_symbol(self.lib, "AttachOverflowConfigForContext") then
-        return to_bool(self.lib.AttachOverflowConfigForContext(self.ctx, cfg))
-    end
+function M.Context:mk_element_desc(opts)
+    return M.mk_element_desc(self, opts)
+end
 
-    -- Back-compat fallback for older libs: map overflow modes to ClipConfig.
-    local visible = self.lib.OVERFLOW_VISIBLE or 0
-    local clip_cfg = ffi.new("struct ClipConfig", {
-        horizontal = tonumber(cfg.xMode) ~= visible,
-        vertical = tonumber(cfg.yMode) ~= visible,
-        childOffset = ffi.new("struct Vector2", { x = 0, y = 0 }),
-    })
-    return to_bool(self.lib.AttachClipConfigForContext(self.ctx, clip_cfg))
+function M.Context:open_element_desc(desc_or_opts)
+    local desc = desc_or_opts
+    if type(desc_or_opts) ~= "cdata" then
+        desc = self:mk_element_desc(desc_or_opts or {})
+    end
+    return to_bool(self.lib.OpenElementWithDescForContext(self.ctx, desc))
+end
+
+function M.Context:open_element_desc_with_id(id_or_name, desc_or_opts)
+    local id = id_or_name
+    if type(id_or_name) == "string" then
+        id = self.lib.GetElementIdFromChars(ffi.cast("char*", id_or_name), #id_or_name)
+    end
+    local desc = desc_or_opts
+    if type(desc_or_opts) ~= "cdata" then
+        desc = self:mk_element_desc(desc_or_opts or {})
+    end
+    return to_bool(self.lib.OpenElementWithIdAndDescForContext(self.ctx, id, desc))
+end
+
+function M.Context:close_element()
+    self.lib.CloseElementForContext(self.ctx)
 end
 
 function M.Context:set_measure_text(fn, user_data)

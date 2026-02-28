@@ -45,6 +45,12 @@ terra api.make_id(base: &int8, index: uint32) : ui.ElementId
     return ui.GetElementIdWithIndex(api.make_string(base), index)
 end
 
+terra api.open_empty_with_id(ctx: &ui.Context, id: ui.ElementId)
+    var desc: ui.ElementDesc
+    desc.flags = 0
+    ui.OpenElementWithIdAndDescForContext(ctx, id, &desc)
+end
+
 terra api.push_probe(id: ui.ElementId)
     if g_probe_count >= MAX_PROBES then
         return
@@ -125,7 +131,7 @@ end
 
 terra api.open_fixed_probe(ctx: &ui.Context, base: &int8, index: uint32, w: float, h: float, dir: ui.LayoutDirection, pad: uint16, gap: uint16, r: float, g: float, b: float, a: float)
     var id = api.make_id(base, index)
-    ui.OpenElementWithIdForContext(ctx, id)
+    api.open_empty_with_id(ctx, id)
     api.configure_current(ctx,
         ui.SIZING_FIXED, w, w, 0.0,
         ui.SIZING_FIXED, h, h, 0.0,
@@ -135,7 +141,7 @@ end
 
 terra api.open_fit_probe(ctx: &ui.Context, base: &int8, index: uint32, dir: ui.LayoutDirection, pad: uint16, gap: uint16, r: float, g: float, b: float, a: float)
     var id = api.make_id(base, index)
-    ui.OpenElementWithIdForContext(ctx, id)
+    api.open_empty_with_id(ctx, id)
     api.configure_current(ctx,
         ui.SIZING_FIT, 0.0, 0.0, 0.0,
         ui.SIZING_FIT, 0.0, 0.0, 0.0,
@@ -145,7 +151,7 @@ end
 
 terra api.open_percent_probe(ctx: &ui.Context, base: &int8, index: uint32, width_percent: float, dir: ui.LayoutDirection, pad: uint16, gap: uint16, r: float, g: float, b: float, a: float)
     var id = api.make_id(base, index)
-    ui.OpenElementWithIdForContext(ctx, id)
+    api.open_empty_with_id(ctx, id)
     api.configure_current(ctx,
         ui.SIZING_PERCENT, 0.0, 0.0, width_percent,
         ui.SIZING_GROW, 0.0, 0.0, 0.0,
@@ -342,7 +348,7 @@ terra api.scenario_fixed_grid(ctx: &ui.Context)
     var row_w = [float](g_width) - 28.0
 
     var root_id = api.make_id("s0_root", 0)
-    ui.OpenElementWithIdForContext(ctx, root_id)
+    api.open_empty_with_id(ctx, root_id)
     api.configure_current(ctx,
         ui.SIZING_FIXED, [float](g_width) - 4.0, [float](g_width) - 4.0, 0.0,
         ui.SIZING_FIXED, [float](g_height) - 4.0, [float](g_height) - 4.0, 0.0,
@@ -431,7 +437,7 @@ terra api.scenario_percent_and_grow(ctx: &ui.Context)
         while i < 35 do
             var idx = [uint32](p * 1000 + i)
             var id = api.make_id("s2_item", idx)
-            ui.OpenElementWithIdForContext(ctx, id)
+            api.open_empty_with_id(ctx, id)
             api.configure_current(ctx,
                 ui.SIZING_GROW, 0.0, 0.0, 0.0,
                 ui.SIZING_FIXED, 10.0 + [float](i % 4), 10.0 + [float](i % 4), 0.0,
@@ -512,7 +518,7 @@ terra api.scenario_clip_lists(ctx: &ui.Context)
     var rows_per = 90
 
     var root_id = api.make_id("s4_root", 0)
-    ui.OpenElementWithIdForContext(ctx, root_id)
+    api.open_empty_with_id(ctx, root_id)
     api.configure_current(ctx,
         ui.SIZING_FIXED, [float](g_width) - 6.0, [float](g_width) - 6.0, 0.0,
         ui.SIZING_FIXED, [float](g_height) - 6.0, [float](g_height) - 6.0, 0.0,
@@ -558,7 +564,7 @@ terra api.scenario_mixed_stress(ctx: &ui.Context)
     var n = 3500
 
     var root_id = api.make_id("s6_root", 0)
-    ui.OpenElementWithIdForContext(ctx, root_id)
+    api.open_empty_with_id(ctx, root_id)
     api.configure_current(ctx,
         ui.SIZING_FIXED, [float](g_width) - 6.0, [float](g_width) - 6.0, 0.0,
         ui.SIZING_FIXED, [float](g_height) - 6.0, [float](g_height) - 6.0, 0.0,
@@ -797,7 +803,7 @@ terra api.scenario_sizing_edge_cases(ctx: &ui.Context)
         var p = 0.40
         if i == 0 then p = 0.05 elseif i == 1 then p = 0.20 elseif i == 2 then p = 0.35 else p = 0.40 end
         var id = api.make_id("s11_pct", [uint32](i))
-        ui.OpenElementWithIdForContext(ctx, id)
+        api.open_empty_with_id(ctx, id)
         api.configure_current(
             ctx,
             ui.SIZING_PERCENT, 0.0, 0.0, p,
@@ -812,7 +818,7 @@ terra api.scenario_sizing_edge_cases(ctx: &ui.Context)
     i = 0
     while i < 5 do
         var id = api.make_id("s11_grow", [uint32](i))
-        ui.OpenElementWithIdForContext(ctx, id)
+        api.open_empty_with_id(ctx, id)
         api.configure_current(
             ctx,
             ui.SIZING_GROW, 0.0, 0.0, 0.0,
@@ -836,7 +842,7 @@ terra api.scenario_sizing_edge_cases(ctx: &ui.Context)
         var p = 0.60
         if i == 0 then p = 0.15 elseif i == 1 then p = 0.25 else p = 0.60 end
         var id = api.make_id("s11_vpct", [uint32](i))
-        ui.OpenElementWithIdForContext(ctx, id)
+        api.open_empty_with_id(ctx, id)
         api.configure_current(
             ctx,
             ui.SIZING_GROW, 0.0, 0.0, 0.0,
@@ -937,7 +943,7 @@ terra api.scenario_seeded_fuzz(ctx: &ui.Context)
             var h = 12.0 + [float]((rv >> 8) % 38)
 
             var id = api.make_id("s14_elem", idx)
-            ui.OpenElementWithIdForContext(ctx, id)
+            api.open_empty_with_id(ctx, id)
 
             var wt = ui.SIZING_FIXED
             var ht = ui.SIZING_FIXED

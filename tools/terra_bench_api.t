@@ -31,6 +31,12 @@ terra api.measure_text(text: &ui.StringSlice, text_cfg: &ui.TextConfig, _user_da
     return 1
 end
 
+terra api.open_empty()
+    var desc: ui.ElementDesc
+    desc.flags = 0
+    ui.OpenElementWithDesc(&desc)
+end
+
 terra api.configure_box(ctx: &ui.Context, elem: &ui.LayoutElement, w: float, h: float, r: float, g: float, b: float)
     if ctx == nil or elem == nil then return end
 
@@ -134,7 +140,7 @@ terra api.build_nested(ctx: &ui.Context, depth: int, branch: int)
 
     var i = 0
     while i < branch do
-        ui.OpenElement()
+        api.open_empty()
         var elem = ctx:getOpenLayoutElement()
         api.configure_box(ctx, elem, 20.0 + [float](depth), 20.0 + [float](depth), 80, 140, 240)
 
@@ -201,7 +207,7 @@ terra api.bench_frame_fixed_children(child_count: int) : int
 
     var i = 0
     while i < child_count do
-        ui.OpenElement()
+        api.open_empty()
         var elem = g_ctx:getOpenLayoutElement()
         if elem ~= nil then
             api.configure_box(&g_ctx, elem, 24.0, 24.0, 220, 120, 90)
@@ -266,7 +272,7 @@ terra api.bench_frame_dashboard(panel_count: int, widgets_per_panel: int) : int
 
     var p = 0
     while p < panel_count do
-        ui.OpenElement()
+        api.open_empty()
         var panel = g_ctx:getOpenLayoutElement()
         if panel ~= nil then
             api.configure_box(&g_ctx, panel, 360.0, 320.0, 25, 35, 50)
@@ -301,7 +307,7 @@ terra api.bench_frame_dashboard(panel_count: int, widgets_per_panel: int) : int
                 s.chars = "widget title value"
                 ui.OpenTextElement(s, &tc)
             else
-                ui.OpenElement()
+                api.open_empty()
                 var widget = g_ctx:getOpenLayoutElement()
                 if widget ~= nil then
                     api.configure_box(&g_ctx, widget, 330.0, 24.0, 50, 80, 120)
@@ -331,7 +337,7 @@ terra api.bench_frame_clip_lists(list_count: int, rows_per_list: int) : int
 
     var i = 0
     while i < list_count do
-        ui.OpenElement()
+        api.open_empty()
         var list = g_ctx:getOpenLayoutElement()
         if list ~= nil then
             api.configure_box(&g_ctx, list, 280.0, 220.0, 20, 25, 32)
@@ -347,7 +353,7 @@ terra api.bench_frame_clip_lists(list_count: int, rows_per_list: int) : int
 
         var r = 0
         while r < rows_per_list do
-            ui.OpenElement()
+            api.open_empty()
             var row = g_ctx:getOpenLayoutElement()
             if row ~= nil then
                 api.configure_box(&g_ctx, row, 260.0, 18.0, 70, 90, 110)
@@ -371,7 +377,7 @@ terra api.bench_frame_stress_mixed(element_count: int) : int
 
     var i = 0
     while i < element_count do
-        ui.OpenElement()
+        api.open_empty()
         var elem = g_ctx:getOpenLayoutElement()
         if elem ~= nil then
             var w = 16.0 + [float](i % 7) * 6.0

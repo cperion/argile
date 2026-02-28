@@ -37,7 +37,7 @@ Build outputs:
 
 `bench/compare.lua` drives:
 
-- Argile through the runtime C API (`ui.capi`, `*ForContext` entry points, including `OpenElementWithConfigBundleForContext` in hot paths)
+- Argile through the runtime C API (`ui.capi`, `*ForContext` entry points, with descriptor-driven `OpenElementWithDescForContext` in hot paths)
 - Clay through canonical `clay.h` APIs (`Clay_*` + macro-required internal `Clay__*` functions)
 
 ## Run

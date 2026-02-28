@@ -401,18 +401,32 @@ ui.ElementConfig = struct {
     config : ui.ElementConfigUnion
 }
 
--- CAPI/Terra helper bundle mirroring the set of configs DSL can attach to a node.
--- All fields are optional pointers; nil means "do not attach".
-ui.NodeBuildConfigBundle = struct {
-    layoutConfig : &ui.LayoutConfig,
-    sharedConfig : &ui.SharedConfig,
-    borderConfig : &ui.BorderConfig,
-    clipConfig : &ui.ClipConfig,
-    floatingConfig : &ui.FloatingConfig,
-    aspectRatioConfig : &ui.AspectRatioConfig,
-    imageConfig : &ui.ImageConfig,
-    customConfig : &ui.CustomConfig,
-    paintConfig : &ui.PaintConfig
+-- ============================================
+-- ELEMENT DESCRIPTOR (CAPI v2)
+-- ============================================
+
+ui.ElementDescFlags = uint32
+ui.DESC_HAS_LAYOUT = 1
+ui.DESC_HAS_SHARED = 2
+ui.DESC_HAS_BORDER = 4
+ui.DESC_HAS_CLIP = 8
+ui.DESC_HAS_FLOATING = 16
+ui.DESC_HAS_ASPECT = 32
+ui.DESC_HAS_IMAGE = 64
+ui.DESC_HAS_CUSTOM = 128
+ui.DESC_HAS_PAINT = 256
+
+ui.ElementDesc = struct {
+    flags : uint32,
+    layout : ui.LayoutConfig,
+    shared : ui.SharedConfig,
+    border : ui.BorderConfig,
+    clip : ui.ClipConfig,
+    floating : ui.FloatingConfig,
+    aspect : ui.AspectRatioConfig,
+    image : ui.ImageConfig,
+    custom : ui.CustomConfig,
+    paint : ui.PaintConfig
 }
 
 -- ============================================

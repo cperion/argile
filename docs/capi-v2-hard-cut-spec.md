@@ -1,6 +1,6 @@
 # Argile CAPI v2 Hard-Cut Specification
 
-Status: Draft (design-phase target)
+Status: Final target (hard-cut baseline)
 
 Authors: Argile maintainers
 
@@ -72,7 +72,7 @@ Required element-open calls:
 3. `bool OpenElementWithIdCharsAndDescForContext(struct Context* ctx, char* chars, int32_t length, const struct ElementDesc* desc);`
 4. `void CloseElementForContext(struct Context* ctx);`
 
-Convenience non-context wrappers MAY exist in Terra/Lua wrappers, but **not as independent CAPI behavior variants**.
+Non-context helpers in Terra/Lua bindings are out of CAPI contract and must be thin calls into these context variants only.
 
 ## 6. New Types
 
@@ -120,9 +120,9 @@ Notes:
 2. `flags` controls which fields are semantically read.
 3. `DESC_HAS_LAYOUT` and `DESC_HAS_SHARED` are recommended in all box-like nodes.
 
-### 6.3 Optional Helper Initializer (Non-ABI)
+### 6.3 Helper Initializer (Non-ABI Convenience)
 
-C headers MAY include an inline helper:
+C headers include an inline helper:
 
 ```c
 static inline struct ElementDesc ElementDesc_Default(void) {
@@ -132,7 +132,7 @@ static inline struct ElementDesc ElementDesc_Default(void) {
 }
 ```
 
-This helper is optional and non-normative for ABI.
+This helper is convenience-only and non-normative for ABI.
 
 ## 7. Semantics
 
@@ -401,12 +401,12 @@ This spec is considered implemented when:
 4. Bench and parity tools run on v2 surface.
 5. Known non-related parity issues (e.g. existing text mismatch) remain isolated and explicit.
 
-## 18. Open Questions (To Resolve Before Implementation Freeze)
+## 18. Resolved Decisions
 
-1. Should `DESC_HAS_LAYOUT` be mandatory-hard-fail, or default-fit fallback? (current draft: fallback)
-2. Should overflow convenience be represented directly in descriptor or remain wrapper-only? (current draft: wrapper-only)
-3. Should text receive a parallel descriptor in v2.1 (`TextDesc`), or stay current shape? (current draft: stay current)
+1. If `DESC_HAS_LAYOUT` is absent, engine applies default-fit fallback (no hard-fail).
+2. Overflow convenience is not represented in `ElementDesc` for v2.
+3. Text remains on current API shape in v2 (no `TextDesc` in this cut).
 
 ## 19. Change Log
 
-- 2026-02-28: Initial hard-cut v2 draft authored.
+- 2026-02-28: Hard-cut v2 final-target spec authored.

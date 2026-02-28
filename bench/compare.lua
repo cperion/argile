@@ -175,6 +175,7 @@ enum { CLAY_LEFT_TO_RIGHT = 0 };
 enum { CLAY_TOP_TO_BOTTOM = 1 };
 enum { CLAY__SIZING_TYPE_FIXED = 3 };
 enum { CLAY_TEXT_WRAP_WORDS = 0 };
+enum { CLAY_TEXT_WRAP_NONE = 2 };
 enum { CLAY_TEXT_ALIGN_LEFT = 0 };
 
 uint32_t Clay_MinMemorySize(void);
@@ -596,7 +597,7 @@ function ArgileCapiBackend.new()
     self.custom_cfg = self.ffi.new("struct CustomConfig[1]")
     self.image_cfg = self.ffi.new("struct ImageConfig[1]")
     self.aspect_cfg = self.ffi.new("struct AspectRatioConfig[1]")
-    self.bundle = self.ffi.new("struct NodeBuildConfigBundle[1]")
+    self.desc = self.ffi.new("struct ElementDesc[1]")
 
     self.custom_cfg[0].customData = nil
     self.image_cfg[0].imageData = nil
@@ -686,16 +687,10 @@ function ArgileCapiBackend:open_box(width, height, direction, padding, child_gap
     shared_cfg.cornerRadius.bottomRight = 0
     shared_cfg.userData = nil
 
-    local bundle = self.bundle[0]
-    bundle.layoutConfig = self.layout_cfg
-    bundle.sharedConfig = self.shared_cfg
-    bundle.borderConfig = nil
-    bundle.clipConfig = nil
-    bundle.floatingConfig = nil
-    bundle.aspectRatioConfig = nil
-    bundle.imageConfig = nil
-    bundle.customConfig = nil
-    bundle.paintConfig = nil
+    local desc = self.desc[0]
+    desc.flags = lib.DESC_HAS_LAYOUT + lib.DESC_HAS_SHARED
+    desc.layout = self.layout_cfg[0]
+    desc.shared = self.shared_cfg[0]
 
     if border_width ~= nil and border_width > 0 then
         local cfg = self.border_cfg[0]
@@ -708,7 +703,8 @@ function ArgileCapiBackend:open_box(width, height, direction, padding, child_gap
         cfg.width.top = border_width
         cfg.width.bottom = border_width
         cfg.width.betweenChildren = 0
-        bundle.borderConfig = self.border_cfg
+        desc.flags = desc.flags + lib.DESC_HAS_BORDER
+        desc.border = cfg
     end
 
     if clip_h ~= nil or clip_v ~= nil then
@@ -717,23 +713,27 @@ function ArgileCapiBackend:open_box(width, height, direction, padding, child_gap
         cfg.vertical = clip_v and true or false
         cfg.childOffset.x = 0
         cfg.childOffset.y = 0
-        bundle.clipConfig = self.clip_cfg
+        desc.flags = desc.flags + lib.DESC_HAS_CLIP
+        desc.clip = cfg
     end
 
     if custom then
         self.custom_cfg[0].customData = nil
-        bundle.customConfig = self.custom_cfg
+        desc.flags = desc.flags + lib.DESC_HAS_CUSTOM
+        desc.custom = self.custom_cfg[0]
     end
     if image then
         self.image_cfg[0].imageData = nil
-        bundle.imageConfig = self.image_cfg
+        desc.flags = desc.flags + lib.DESC_HAS_IMAGE
+        desc.image = self.image_cfg[0]
     end
     if aspect_ratio ~= nil then
         self.aspect_cfg[0].aspectRatio = aspect_ratio
-        bundle.aspectRatioConfig = self.aspect_cfg
+        desc.flags = desc.flags + lib.DESC_HAS_ASPECT
+        desc.aspect = self.aspect_cfg[0]
     end
 
-    lib.OpenElementWithConfigBundleForContext(self.ctx, self.bundle)
+    lib.OpenElementWithDescForContext(self.ctx, self.desc)
 end
 
 function ArgileCapiBackend:open_text(ptr, len, text_cfg_ptr)

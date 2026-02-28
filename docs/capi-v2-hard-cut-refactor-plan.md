@@ -1,86 +1,93 @@
-# Argile CAPI v2 Hard-Cut Refactor Plan
+# Argile CAPI v2 Hard-Cut Refactor Plan (One-Go)
 
-Status: Execution plan (design-phase)
+Status: Execution blueprint (single-pass cutover)
 
 Date: 2026-02-28
 
 Companion spec:
 - `docs/capi-v2-hard-cut-spec.md`
 
-## 1. Objective
+## 1. Execution Stance
 
-Execute a **hard-cut migration** from CAPI v1 element-construction APIs to CAPI v2 descriptor APIs with no compatibility layer.
+This is a **monolithic refactor** plan.
 
-Primary success conditions:
+We are not optimizing for gradual migration, temporary compatibility layers, or dual-path code.
 
-1. v1 element-construction symbols are fully removed from exports.
-2. v2 descriptor open path is the only non-text element construction path.
-3. All in-repo call sites (bench, bindings, tests, tools) are migrated.
-4. Build/test/parity/bench workflows run against v2 only.
+We are optimizing for:
 
-## 2. Non-Negotiable Constraints
+1. writing the target architecture directly,
+2. deleting obsolete APIs immediately,
+3. landing the final v2 surface in one decisive pass.
 
-1. No compatibility wrappers in CAPI exports.
-2. No dual-path maintenance (`Attach*` plus descriptor) after cutover.
-3. API version bump to `ARGILE_API_VERSION = 2` is mandatory.
-4. Generated headers/ffi must reflect only v2 element-construction surface.
+Core rule:
 
-## 3. High-Level Program Map (Illustrated)
+- no v1 element-construction compatibility code survives the cut.
 
-```text
-P0 Spec Freeze
-  |
-  v
-P1 Core Types (config/init)
-  |
-  v
-P2 Engine Implementation (context)
-  |
-  v
-P3 Export Surface Cut (capi/build)
-  |
-  v
-P4 In-Repo Migration (bench/tools/bindings/tests)
-  |
-  v
-P5 Validation + Performance Baseline
-  |
-  v
-P6 Cleanup + Doc Finalization
+## 2. Target End State (Code, Not Transition)
+
+At the end of this refactor, Argile has exactly one non-text element construction model in CAPI:
+
+1. build `ElementDesc`,
+2. call `OpenElementWithDesc*`,
+3. call `CloseElement*`.
+
+Everything else from v1 compose style is gone.
+
+## 3. Final API Shape (Authoritative)
+
+## 3.1 New Canonical Symbols
+
+Required symbols in exported CAPI:
+
+1. `bool OpenElementWithDescForContext(struct Context* ctx, const struct ElementDesc* desc);`
+2. `bool OpenElementWithIdAndDescForContext(struct Context* ctx, struct ElementId id, const struct ElementDesc* desc);`
+3. `bool OpenElementWithIdCharsAndDescForContext(struct Context* ctx, char* chars, int32_t length, const struct ElementDesc* desc);`
+
+Retained existing symbol required by model:
+
+1. `void CloseElementForContext(struct Context* ctx);`
+
+## 3.2 New Descriptor Types
+
+Target descriptor constants:
+
+```c
+typedef uint32_t ElementDescFlags;
+enum {
+  DESC_HAS_LAYOUT   = 1u << 0,
+  DESC_HAS_SHARED   = 1u << 1,
+  DESC_HAS_BORDER   = 1u << 2,
+  DESC_HAS_CLIP     = 1u << 3,
+  DESC_HAS_FLOATING = 1u << 4,
+  DESC_HAS_ASPECT   = 1u << 5,
+  DESC_HAS_IMAGE    = 1u << 6,
+  DESC_HAS_CUSTOM   = 1u << 7,
+  DESC_HAS_PAINT    = 1u << 8
+};
 ```
 
-Parallel work allowed:
+Target descriptor struct:
 
-- P4 bindings migration can begin when P3 is on branch and symbol list is stable.
-- P4 benchmark migration can proceed in parallel with P4 test migration.
+```c
+struct ElementDesc {
+  uint32_t flags;
+  struct LayoutConfig layout;
+  struct SharedConfig shared;
+  struct BorderConfig border;
+  struct ClipConfig clip;
+  struct FloatingConfig floating;
+  struct AspectRatioConfig aspect;
+  struct ImageConfig image;
+  struct CustomConfig custom;
+  struct PaintConfig paint;
+};
+```
 
-Blocked dependencies:
+## 3.3 Removed Symbols (Hard Delete)
 
-- P3 blocked on P2.
-- P5 blocked on P4.
-- P6 blocked on P5.
+The following families are removed from export surface:
 
-## 4. Exact API Delta
-
-## 4.1 Add (v2)
-
-Required new symbols:
-
-1. `OpenElementWithDescForContext`
-2. `OpenElementWithIdAndDescForContext`
-3. `OpenElementWithIdCharsAndDescForContext`
-
-Required new types/constants:
-
-1. `ElementDesc`
-2. `ElementDescFlags`
-3. `DESC_HAS_*` constants
-
-## 4.2 Remove (v1 hard cut)
-
-Remove from export table (`src/capi.t`):
-
-1. `OpenElement*` family (plain/id/idChars)
+1. `OpenElement*` (plain/id/idChars v1 forms)
 2. `OpenStyledElement*`
 3. `ConfigureOpenElementBox*`
 4. `SetOpenElementLayoutConfig*`
@@ -89,373 +96,262 @@ Remove from export table (`src/capi.t`):
 7. `ApplyOpenElementConfigs*`
 8. `OpenElementWith*ConfigBundle*`
 
-Retain:
+## 3.4 Version Bump
 
-1. `CloseElementForContext`
-2. text-open APIs
-3. frame/init/input/render/hash APIs
+1. `ARGILE_API_VERSION` is `2`.
+2. v1 clients must fail version check and migrate.
 
-## 5. File-Level Refactor Matrix
+## 4. Target File-by-File Code Shape
 
-| Area | Files | Operation |
-|---|---|---|
-| Core type definitions | `src/config.t` | add `ElementDesc`, flags |
-| Engine implementation | `src/context.t` | add descriptor open path; remove v1 composition entry points |
-| Public UI surface | `src/init.t` | remove old forwards; add v2 forwards |
-| Export surface | `src/capi.t` | drop old exports; add v2 exports |
-| Header/ffi generation | `tools/build_argile.t` | no algorithm change, but verify output symbol set |
-| LuaJIT binding | `bindings/luajit/argile_lj/runtime.lua` | replace old attach/open flows with descriptor calls |
-| Bench harness | `bench/compare.lua` | use descriptor call only for non-text elements |
-| Terra bench shim | `tools/terra_bench_api.t` | migrate element creation to descriptor path |
-| Tests | `tests/*` | remove v1 tests, add v2 tests |
-| Docs | `README.md`, `bench/README.md` | update API usage and migration notes |
+This section defines what each key file should look like after the refactor.
 
-## 6. Detailed Phase Plan
+## 4.1 `src/config.t`
 
-## P0 - Spec Freeze
+Target additions:
 
-Goal:
+1. `ui.ElementDescFlags = uint32`
+2. `ui.DESC_HAS_*` constants
+3. `ui.ElementDesc` struct
 
-1. Freeze `ElementDesc` layout and flag semantics.
-2. Freeze removed symbol list.
+Target removals:
 
-Tasks:
+1. `ui.NodeBuildConfigBundle` (remove entirely)
 
-1. Review and approve `docs/capi-v2-hard-cut-spec.md`.
-2. Resolve open questions (layout default fallback, overflow representation, text descriptor deferral).
-3. Record final decision log section in spec.
+Target intent:
 
-Exit criteria:
+- descriptor is the only CAPI-facing container for optional element configs.
 
-1. No unresolved “Open Questions” section items.
-2. Symbol add/remove list committed.
+## 4.2 `src/context.t`
 
-## P1 - Core Types
+Target core implementation units:
 
-Goal:
+1. `Context:applyElementDesc(desc: &config.ElementDesc) : bool`
+2. `Context:openElementWithDesc(hasExplicitId: bool, id: hash.ElementId, desc: &config.ElementDesc) : bool`
+3. public wrappers:
+   - `ui.OpenElementWithDescForContext`
+   - `ui.OpenElementWithIdAndDescForContext`
+   - `ui.OpenElementWithIdCharsAndDescForContext`
 
-Add v2 descriptor and constants in config layer.
+Target apply order (must be literal in code):
 
-Tasks:
+1. layout
+2. shared
+3. border
+4. clip
+5. aspect
+6. image
+7. custom
+8. floating
+9. paint
 
-1. In `src/config.t` add:
-   - `ui.ElementDescFlags = uint32`
-   - `ui.DESC_HAS_*` constants
-   - `ui.ElementDesc` struct
-2. Ensure `src/init.t` re-exports new type/constants.
-3. Ensure order is stable and deterministic for generated C definitions.
+Target sketch:
 
-Implementation notes:
+```terra
+terra ui.Context:applyElementDesc(desc: &config.ElementDesc) : bool
+    if desc == nil then return false end
+    var ok = true
 
-- Use POD fields only; no pointer members inside `ElementDesc` except existing pointer fields already inside nested config structs (e.g., paint ops).
-- Keep field ordering stable to avoid accidental ABI churn.
-
-Validation commands:
-
-```bash
-make build
-rg "ElementDesc|DESC_HAS_" build/argile_api.h build/argile_api_ffi.lua
+    if (desc.flags and config.DESC_HAS_LAYOUT) ~= 0 then
+        var openElem = self:getOpenLayoutElement()
+        if openElem == nil then return false end
+        openElem.layoutConfig = desc.layout
+    end
+    if (desc.flags and config.DESC_HAS_SHARED) ~= 0 then
+        var sharedPtr = self:storeSharedConfig(desc.shared)
+        if sharedPtr == nil then return false end
+        var cu: config.ElementConfigUnion
+        cu.shared = sharedPtr
+        if self:attachElementConfig(cu, config.CONFIG_SHARED) == nil then ok = false end
+    end
+    -- ... repeat in fixed order for border/clip/aspect/image/custom/floating/paint ...
+    return ok
+end
 ```
 
-Exit criteria:
+Target removals from `src/context.t`:
 
-1. `ElementDesc` and flags exist in generated header and ffi.
-2. No behavior changes yet.
+1. `ConfigureOpenElementBox*`
+2. `OpenStyledElement*`
+3. `SetOpenElementLayoutConfig*` public forms (internal assignment helpers may remain if used by desc path)
+4. all public `Attach*Config*`
+5. `AttachOverflowConfig*`
+6. `ApplyOpenElementConfigs*`
+7. `OpenElementWith*ConfigBundle*`
+8. v1 `OpenElement*` public entry points
 
-## P2 - Engine Path Implementation
+Notes:
 
-Goal:
+1. internal storage helpers like `storeBorderConfig`, `storePaintConfig`, `attachElementConfig` remain and are used by descriptor path.
+2. paint copy semantics remain in `storePaintConfig`.
 
-Implement descriptor-driven open path in context layer.
+## 4.3 `src/init.t`
 
-Tasks:
+Target public forwards include descriptor APIs and exclude removed families.
 
-1. Add internal helper in `src/context.t`:
-   - `Context:applyElementDesc(desc)`
-2. Add CAPI entry points:
-   - `OpenElementWithDescForContext`
-   - `OpenElementWithIdAndDescForContext`
-   - `OpenElementWithIdCharsAndDescForContext`
-3. Enforce config apply order exactly as spec.
-4. Reuse existing store/attach internals (`store*Config`, `attachElementConfig`) to avoid solver changes.
-5. Handle paint copy semantics using existing `storePaintConfig` path.
+Keep examples:
 
-Pseudo flow:
+1. `ui.OpenElementWithDescForContext`
+2. `ui.OpenElementWithIdAndDescForContext`
+3. `ui.OpenElementWithIdCharsAndDescForContext`
+4. `ui.CloseElementForContext`
 
-```text
-OpenElementWithDescForContext
-  -> openElement/openElementWithId
-  -> apply layout (desc or default)
-  -> attach shared/border/clip/aspect/image/custom/floating/paint by flags
-  -> return bool
+Remove forwards for deleted v1 construction APIs.
+
+## 4.4 `src/capi.t`
+
+Target export table contains descriptor open APIs only for non-text construction.
+
+Export additions:
+
+1. `OpenElementWithDescForContext`
+2. `OpenElementWithIdAndDescForContext`
+3. `OpenElementWithIdCharsAndDescForContext`
+
+Export deletions:
+
+1. all symbol families listed in section 3.3.
+
+## 4.5 `bindings/luajit/argile_lj/runtime.lua`
+
+Target binding shape:
+
+1. `mk_element_desc(opts)` helper (Lua table -> `struct ElementDesc`)
+2. `open_element_desc(desc_or_opts)` method
+3. optional `open_element_desc_with_id(id, desc_or_opts)`
+
+Explicitly remove methods that map to deleted v1 symbols:
+
+1. attach-overflow helpers built on `Attach*`
+2. any open/configure/attach composition helpers
+
+Binding usage target:
+
+```lua
+local d = ctx:mk_element_desc({
+  layout = {...},
+  shared = {...},
+  border = {...},
+})
+ctx:open_element_desc(d)
+lib.CloseElementForContext(ctx.ctx)
 ```
 
-Validation commands:
+## 4.6 `bench/compare.lua`
 
-```bash
-make test
-```
+Target non-text path:
 
-Exit criteria:
+1. fill reusable `struct ElementDesc[1]` buffers,
+2. set flags by scenario/mode,
+3. one call `OpenElementWithDescForContext`.
 
-1. New open API works with direct unit coverage.
-2. No use of removed APIs required by engine internals.
+No use of:
 
-## P3 - Export Surface Hard Cut
+1. `OpenElementForContext`
+2. `ConfigureOpenElementBoxForContext`
+3. `Attach*ConfigForContext`
+4. bundle APIs
 
-Goal:
+Text path remains explicit text-open call.
 
-Remove v1 construction symbols from public CAPI.
+## 4.7 `tools/terra_bench_api.t`
 
-Tasks:
+Target Terra benchmark shim mirrors descriptor model exactly.
 
-1. Edit `src/capi.t` export table:
-   - delete removed symbol list
-   - add v2 descriptor symbols
-2. Edit `src/init.t` public forwards:
-   - delete removed forwards
-   - add new forwards
-3. Bump `ARGILE_API_VERSION` in `src/context.t` from `1` to `2`.
-4. Rebuild and verify generated outputs.
+No compose-in-place calls in benchmark shim.
 
-Validation commands:
+## 4.8 Tests (`tests/`)
 
-```bash
-make build
-rg "OpenElementWithDescForContext|OpenElementWithIdAndDescForContext" build/argile_api.h
-rg "AttachBorderConfigForContext|ConfigureOpenElementBoxForContext|OpenElementWithConfigBundleForContext" build/argile_api.h && false || true
-```
+Target tests are v2-centric.
 
-Exit criteria:
+Add dedicated tests:
 
-1. Old symbols absent from `build/argile_api.h` and `build/argile_api_ffi.lua`.
-2. New v2 symbols present.
-3. API version is 2.
+1. `test_capi_element_desc.t`
+2. `test_capi_element_desc_errors.t`
 
-## P4 - In-Repo Call-Site Migration
+Delete/replace tests relying on deleted v1 element-construction symbols.
 
-Goal:
+## 5. One-Go Implementation Script (Single Pass)
 
-Update all in-repo consumers to v2 APIs.
+This is the coding order for a fast hard cut, not phased release management.
 
-### P4-A Bench (LuaJIT)
+1. **Define final types first** in `src/config.t`.
+2. **Implement final descriptor open path** in `src/context.t`.
+3. **Delete old context entry points immediately** after descriptor path compiles.
+4. **Replace public forwards/exports** in `src/init.t` and `src/capi.t`.
+5. **Regenerate C API artifacts** (`make build`) so headers/ffi match v2.
+6. **Migrate all in-repo callers** (bench, tools, bindings, tests) directly to descriptor API.
+7. **Remove dead references and dead code** with repository-wide symbol search.
+8. **Run full validation only after end-state code exists**.
 
-Files:
+This keeps coding momentum focused on the final architecture and avoids maintaining temporary green intermediate states.
 
-- `bench/compare.lua`
+## 6. Target Repository-Wide Symbol State
 
-Tasks:
+Final grep expectations:
 
-1. Replace non-text open paths with `ElementDesc` construction and one open call.
-2. Keep text paths on `OpenTextElementWithLengthForContext`.
-3. Preserve strict parity checks and fair-mode mechanics.
-
-### P4-B Terra Bench Shim
-
-Files:
-
-- `tools/terra_bench_api.t`
-
-Tasks:
-
-1. Replace old compose steps with descriptor call path.
-2. Keep benchmark scenario equivalence with Clay.
-
-### P4-C LuaJIT Binding Runtime
-
-Files:
-
-- `bindings/luajit/argile_lj/runtime.lua`
-
-Tasks:
-
-1. Remove runtime methods that rely on removed attach/configure APIs.
-2. Introduce descriptor constructor helpers (Lua table -> `struct ElementDesc`).
-3. Expose one `open_element_desc(...)` method.
-4. Ensure existing wrapper users fail loudly if still calling removed methods.
-
-### P4-D Tests
-
-Files:
-
-- add: `tests/test_capi_element_desc.t`
-- add: `tests/test_capi_element_desc_errors.t`
-- update/remove tests that call removed symbols.
-
-Test cases (minimum):
-
-1. descriptor with layout+shared renders expected rectangle command.
-2. descriptor with border/custom/image/aspect toggles attaches correct config types.
-3. id variants map correctly.
-4. missing context returns false.
-5. paint copy path works.
-
-Validation commands:
-
-```bash
-make test
-make bench-quick
-make build-bench-c
-make bench-c-heavy
-```
-
-Exit criteria:
-
-1. No in-repo source references removed symbols.
-2. Bench and test suites compile/run on v2 surface.
-
-## P5 - Validation and Performance Gate
-
-Goal:
-
-Validate functional parity and benchmark characteristics after hard cut.
-
-Tasks:
-
-1. Run regression matrix:
-   - `make test`
-   - `make parity-quick`
-   - `make bench-quick`
-   - `make bench-c-heavy`
-2. Confirm benchmark checksum behavior:
-   - expected text mismatch remains explicit until text parity task is completed.
-3. Capture before/after for config-heavy scenario (`Config churn mixed`).
-
-Acceptance thresholds:
-
-1. No new parity mismatch categories beyond known text issue.
-2. Config-heavy benchmark no longer regresses from API call-shape overhead.
-
-## P6 - Cleanup and Final Docs
-
-Goal:
-
-Remove dead code and finalize docs for v2-only world.
-
-Tasks:
-
-1. Delete dead helper code in `src/context.t` tied only to removed symbols.
-2. Remove outdated docs mentioning attach/configure compose style.
-3. Update README/bench docs/binding docs with descriptor-first examples.
-4. Add migration note entry summarizing hard cut.
-
-Exit criteria:
-
-1. No dead exported or internal entry points for removed v1 construction APIs.
-2. Docs show only v2 descriptor usage.
-
-## 7. Symbol and Reference Audit Checklist
-
-Run these checks during P3-P6.
-
-### 7.1 Removed Symbol Detection
+Removed v1 symbols should return no active code references:
 
 ```bash
 rg "OpenStyledElement|ConfigureOpenElementBox|Attach(Border|Clip|Custom|Image|Aspect|Paint|Shared|Floating)|OpenElementWithConfigBundle|ApplyOpenElementConfigs" src bindings tools bench tests
 ```
 
-Expected final result:
-
-- no runtime code references removed symbols.
-
-### 7.2 v2 Symbol Presence
+Descriptor symbols should exist and be used:
 
 ```bash
-rg "OpenElementWithDescForContext|OpenElementWithIdAndDescForContext|OpenElementWithIdCharsAndDescForContext|ElementDesc|DESC_HAS_" src build
+rg "OpenElementWithDescForContext|OpenElementWithIdAndDescForContext|OpenElementWithIdCharsAndDescForContext|ElementDesc|DESC_HAS_" src bindings tools bench tests build
 ```
 
-Expected final result:
+## 7. Minimal Validation Policy (After Code, Not During)
 
-- all present in source and generated outputs.
+Validation runs after the hard-cut rewrite is complete:
 
-## 8. Detailed Risk Register
+1. `make build`
+2. `make test`
+3. `make parity-quick`
+4. `make bench-quick`
+5. `make bench-c-heavy`
 
-| Risk | Impact | Probability | Mitigation |
-|---|---|---|---|
-| Descriptor layout churn during implementation | ABI break noise | Medium | freeze field order in spec before coding |
-| Hidden references to removed symbols in bindings/tools | build failures late | High | run symbol audit in every phase |
-| Behavior drift from changed config apply order | parity regressions | Medium | enforce spec order + dedicated tests |
-| Paint ownership mistakes | crashes/data corruption | Medium | explicit tests for copied ops and null checks |
-| Hard cut lands without docs sync | user confusion | High | P6 requires docs completion gate |
+Expected benchmark parity behavior during this refactor:
 
-## 9. Rollout and Branch Strategy
+1. no new mismatch categories should be introduced by API redesign,
+2. existing known text mismatch may remain until dedicated text parity work is done.
 
-Recommended branch model:
-
-1. `feature/capi-v2-desc-hard-cut` main integration branch.
-2. One commit per phase milestone where possible.
-3. Avoid mixed commits (spec + engine + bindings all at once) except final squash if desired.
-
-Suggested commit sequence:
-
-1. `docs(capi): add v2 hard-cut spec and plan`
-2. `feat(capi): add element desc types and flags`
-3. `feat(context): implement descriptor open APIs`
-4. `refactor(capi): remove v1 construction exports, bump api version`
-5. `refactor(bench): migrate to descriptor path`
-6. `refactor(bindings): migrate luajit runtime to descriptor path`
-7. `test(capi): add descriptor API coverage`
-8. `docs(capi): finalize v2-only usage docs`
-
-## 10. Verification Matrix
-
-| Gate | Command | Expected |
-|---|---|---|
-| Build | `make build` | success, v2 header/ffi generated |
-| Unit tests | `make test` | all pass |
-| Parity quick | `make parity-quick` | pass with existing tolerances |
-| LuaJIT bench quick | `make bench-quick` | runs, strict parity only fails on known text mismatch until fixed |
-| C bench heavy | `make bench-c-heavy` | runs, reports explicit parity summary |
-| Symbol removal | `rg` audit commands | no v1 construction references |
-
-## 11. Illustrated Data-Path Before/After
-
-### Before (v1 compose model)
+## 8. Illustrated End-State Data Path
 
 ```text
-Caller
-  -> OpenElement
-  -> ConfigureOpenElementBox
-  -> AttachBorder?
-  -> AttachClip?
-  -> AttachCustom?
-  -> AttachImage?
-  -> AttachAspect?
-  -> CloseElement
+Caller (C / LuaJIT / Terra)
+   |
+   | fill ElementDesc (flags + config payloads)
+   v
+OpenElementWithDescForContext
+   |
+   +--> open layout element node
+   +--> apply descriptor fields in fixed order
+   +--> attach stored configs
+   +--> return bool
+   v
+CloseElementForContext
 ```
 
-### After (v2 descriptor model)
+## 9. Definition of Done
 
-```text
-Caller
-  -> Fill ElementDesc{flags + configs}
-  -> OpenElementWithDesc
-  -> CloseElement
-```
-
-### Engine Internal (v2)
-
-```text
-OpenElementWithDesc
-  +-- open element node
-  +-- apply layout/default
-  +-- attach configs by flag in fixed order
-  +-- return bool
-```
-
-## 12. Definition of Done
-
-All must be true:
+The refactor is complete only when all are true:
 
 1. `ARGILE_API_VERSION == 2`.
-2. Removed v1 construction APIs are absent from generated CAPI artifacts.
-3. All in-repo callers compile and run against v2.
-4. Benchmark and parity paths are v2-only for non-text element construction.
-5. Docs and binding guidance are v2-only and descriptor-centric.
+2. v1 construction symbol families are absent from generated `build/argile_api.h` and `build/argile_api_ffi.lua`.
+3. all in-repo consumers use descriptor opens for non-text elements.
+4. no compatibility wrappers for removed v1 construction APIs remain in exports.
+5. docs describe descriptor-first v2 only.
 
-## 13. Immediate Next Actions
+## 10. Immediate Coding Target
 
-1. Approve this execution plan and spec.
-2. Start P1 on `src/config.t` + `src/init.t`.
-3. Implement P2 in `src/context.t`.
-4. Cut exports in P3 and migrate bench/binding/tests in P4.
+Start directly with end-state code in this order:
+
+1. `src/config.t`
+2. `src/context.t`
+3. `src/init.t`
+4. `src/capi.t`
+5. `bench/compare.lua`, `tools/terra_bench_api.t`, `bindings/luajit/argile_lj/runtime.lua`, tests
+6. docs cleanup
+
+No staged compatibility checkpoints.

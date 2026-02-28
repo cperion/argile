@@ -58,7 +58,7 @@ local DecodedElementConfigs = struct {
 }
 
 ui.MAXFLOAT = 3.40282346638528859812e+38
-ui.ARGILE_API_VERSION = 1
+ui.ARGILE_API_VERSION = 2
 
 ui.Context = struct {
     maxElementCount : int32,
@@ -106,8 +106,9 @@ ui.Context = struct {
     disabledIds : UInt32Array,
     elementIdLookupKeys : UInt32Array,
     elementIdLookupValues : Int32Array,
+    elementIdLookupGenerations : UInt32Array,
     elementBoundingBoxes : BoundingBoxArray,
-    elementBoundingBoxValid : BoolArray,
+    elementBoundingBoxGenerations : UInt32Array,
     warningTextMeasurementFunctionNotSet : bool,
     warningMaxTextMeasureCacheExceeded : bool,
     warningDuplicateId : bool,
@@ -250,22 +251,23 @@ terra ui.Context:initialize(arena: &ui.Arena, maxElements: int32) : bool
     if not self.disabledIds:allocate(maxElements, arena) then return false end
     if not self.elementIdLookupKeys:allocate(maxElements * 4, arena) then return false end
     if not self.elementIdLookupValues:allocate(maxElements * 4, arena) then return false end
+    if not self.elementIdLookupGenerations:allocate(maxElements * 4, arena) then return false end
     if not self.elementBoundingBoxes:allocate(maxElements, arena) then return false end
-    if not self.elementBoundingBoxValid:allocate(maxElements, arena) then return false end
+    if not self.elementBoundingBoxGenerations:allocate(maxElements, arena) then return false end
 
     self.elementIdLookupKeys.length = self.elementIdLookupKeys.capacity
     self.elementIdLookupValues.length = self.elementIdLookupValues.capacity
-    self.elementBoundingBoxValid.length = self.elementBoundingBoxValid.capacity
+    self.elementIdLookupGenerations.length = self.elementIdLookupGenerations.capacity
+    self.elementBoundingBoxGenerations.length = self.elementBoundingBoxGenerations.capacity
     self.measureTextHashMap.length = self.measureTextHashMap.capacity
     var i: int32 = 0
-    while i < self.elementIdLookupValues.length do
-        self.elementIdLookupKeys.internalArray[i] = 0
-        self.elementIdLookupValues.internalArray[i] = -1
+    while i < self.elementIdLookupGenerations.length do
+        self.elementIdLookupGenerations.internalArray[i] = 0
         i = i + 1
     end
     i = 0
-    while i < self.elementBoundingBoxValid.length do
-        self.elementBoundingBoxValid.internalArray[i] = false
+    while i < self.elementBoundingBoxGenerations.length do
+        self.elementBoundingBoxGenerations.internalArray[i] = 0
         i = i + 1
     end
     i = 0
@@ -288,6 +290,20 @@ end
 terra ui.Context:resetEphemeral()
     self.internalArena.nextAllocation = self.arenaResetOffset
     self.generation = self.generation + 1
+    if self.generation == 0 then
+        -- Wrapped generation counter: invalidate stamped lookup/bbox metadata.
+        self.generation = 1
+        var stampIdx: int32 = 0
+        while stampIdx < self.elementIdLookupGenerations.length do
+            self.elementIdLookupGenerations.internalArray[stampIdx] = 0
+            stampIdx = stampIdx + 1
+        end
+        stampIdx = 0
+        while stampIdx < self.elementBoundingBoxGenerations.length do
+            self.elementBoundingBoxGenerations.internalArray[stampIdx] = 0
+            stampIdx = stampIdx + 1
+        end
+    end
     self.dynamicElementIndex = 0
     self.maxElementsExceeded = false
     self.warningTextMeasurementFunctionNotSet = false
@@ -330,19 +346,6 @@ terra ui.Context:resetEphemeral()
     self.sharedConfigs:clear()
     self.paintConfigs:clear()
     self.paintOps:clear()
-
-    var mapIdx: int32 = 0
-    while mapIdx < self.elementIdLookupValues.length do
-        self.elementIdLookupKeys.internalArray[mapIdx] = 0
-        self.elementIdLookupValues.internalArray[mapIdx] = -1
-        mapIdx = mapIdx + 1
-    end
-
-    var bbIdx: int32 = 0
-    while bbIdx < self.elementBoundingBoxValid.length do
-        self.elementBoundingBoxValid.internalArray[bbIdx] = false
-        bbIdx = bbIdx + 1
-    end
 end
 
 terra ui.Context:registerElementId(elementId: uint32, elementIndex: int32)
@@ -350,14 +353,17 @@ terra ui.Context:registerElementId(elementId: uint32, elementIndex: int32)
     var cap = self.elementIdLookupValues.length
     var slot = [int32](elementId % [uint32](cap))
     var probes: int32 = 0
+    var currentGeneration = self.generation
     while probes < cap do
+        var slotGeneration = self.elementIdLookupGenerations.internalArray[slot]
         var key = self.elementIdLookupKeys.internalArray[slot]
-        var value = self.elementIdLookupValues.internalArray[slot]
-        if value < 0 then
+        if slotGeneration ~= currentGeneration then
             self.elementIdLookupKeys.internalArray[slot] = elementId
             self.elementIdLookupValues.internalArray[slot] = elementIndex
+            self.elementIdLookupGenerations.internalArray[slot] = currentGeneration
             return
         elseif key == elementId then
+            var value = self.elementIdLookupValues.internalArray[slot]
             if value ~= elementIndex and not self.warningDuplicateId then
                 self.warningDuplicateId = true
                 ui.ReportError(config.ERROR_TYPE_DUPLICATE_ID,
@@ -379,13 +385,13 @@ terra ui.Context:findElementIndexById(elementId: uint32) : int32
     var cap = self.elementIdLookupValues.length
     var slot = [int32](elementId % [uint32](cap))
     var probes: int32 = 0
+    var currentGeneration = self.generation
     while probes < cap do
-        var value = self.elementIdLookupValues.internalArray[slot]
-        if value < 0 then
+        if self.elementIdLookupGenerations.internalArray[slot] ~= currentGeneration then
             return -1
         end
         if self.elementIdLookupKeys.internalArray[slot] == elementId then
-            return value
+            return self.elementIdLookupValues.internalArray[slot]
         end
         slot = slot + 1
         if slot >= cap then
@@ -1051,7 +1057,7 @@ terra ui.Context:beginLayout(width: float, height: float)
     rootLayout.childGap = 0
     rootLayout.childAlignment.x = config.ALIGN_X_LEFT
     rootLayout.childAlignment.y = config.ALIGN_Y_TOP
-    rootLayout.layoutDirection = config.TOP_TO_BOTTOM
+    rootLayout.layoutDirection = config.LEFT_TO_RIGHT
     
     var openElem = self:getOpenLayoutElement()
     if openElem ~= nil then
@@ -1077,82 +1083,6 @@ end
 
 terra ui.BeginLayout(width: float, height: float)
     ui.BeginLayoutForContext(ui.GetCurrentContext(), width, height)
-end
-
-terra ui.OpenElementForContext(ctx: &ui.Context)
-    if ctx ~= nil then
-        ctx:openElement()
-    end
-end
-
-terra ui.OpenElement()
-    ui.OpenElementForContext(ui.GetCurrentContext())
-end
-
-terra ui.OpenElementWithIdForContext(ctx: &ui.Context, elementId: hash.ElementId)
-    if ctx ~= nil then
-        ctx:openElementWithId(elementId)
-    end
-end
-
-terra ui.OpenElementWithId(elementId: hash.ElementId)
-    ui.OpenElementWithIdForContext(ui.GetCurrentContext(), elementId)
-end
-
-terra ui.ConfigureOpenElementBoxForContext(ctx: &ui.Context, width: float, height: float, layoutDirection: config.LayoutDirection, padding: uint16, childGap: uint16, r: float, g: float, b: float, a: float)
-    if ctx == nil then return end
-
-    var elem = ctx:getOpenLayoutElement()
-    if elem == nil then return end
-
-    var lc: config.LayoutConfig
-    lc.sizing.width.type = config.SIZING_FIXED
-    lc.sizing.width.size.min = width
-    lc.sizing.width.size.max = width
-    lc.sizing.width.percent = 0
-    lc.sizing.height.type = config.SIZING_FIXED
-    lc.sizing.height.size.min = height
-    lc.sizing.height.size.max = height
-    lc.sizing.height.percent = 0
-    lc.padding.left = padding
-    lc.padding.right = padding
-    lc.padding.top = padding
-    lc.padding.bottom = padding
-    lc.childGap = childGap
-    lc.childAlignment.x = config.ALIGN_X_LEFT
-    lc.childAlignment.y = config.ALIGN_Y_TOP
-    lc.layoutDirection = layoutDirection
-    elem.layoutConfig = ctx:storeLayoutConfig(lc)
-
-    var shared: config.SharedConfig
-    shared.backgroundColor.r = r
-    shared.backgroundColor.g = g
-    shared.backgroundColor.b = b
-    shared.backgroundColor.a = a
-    shared.cornerRadius.topLeft = 8
-    shared.cornerRadius.topRight = 8
-    shared.cornerRadius.bottomLeft = 8
-    shared.cornerRadius.bottomRight = 8
-    shared.userData = nil
-    var sharedPtr = ctx:storeSharedConfig(shared)
-    if sharedPtr ~= nil then
-        var cu: config.ElementConfigUnion
-        cu.sharedConfig = sharedPtr
-        ctx:attachElementConfig(cu, config.CONFIG_SHARED)
-    end
-end
-
-terra ui.ConfigureOpenElementBox(width: float, height: float, layoutDirection: config.LayoutDirection, padding: uint16, childGap: uint16, r: float, g: float, b: float, a: float)
-    ui.ConfigureOpenElementBoxForContext(ui.GetCurrentContext(), width, height, layoutDirection, padding, childGap, r, g, b, a)
-end
-
-terra ui.OpenStyledElementForContext(ctx: &ui.Context, width: float, height: float, layoutDirection: config.LayoutDirection, padding: uint16, childGap: uint16, r: float, g: float, b: float, a: float)
-    ui.OpenElementForContext(ctx)
-    ui.ConfigureOpenElementBoxForContext(ctx, width, height, layoutDirection, padding, childGap, r, g, b, a)
-end
-
-terra ui.OpenStyledElement(width: float, height: float, layoutDirection: config.LayoutDirection, padding: uint16, childGap: uint16, r: float, g: float, b: float, a: float)
-    ui.OpenStyledElementForContext(ui.GetCurrentContext(), width, height, layoutDirection, padding, childGap, r, g, b, a)
 end
 
 terra ui.CloseElementForContext(ctx: &ui.Context)
@@ -1280,11 +1210,11 @@ terra ui.Context:openTextElementInternal(text: config.String, textConfig: &confi
         var defaultLayout : config.LayoutConfig
         defaultLayout.sizing.width.type = config.SIZING_FIT
         defaultLayout.sizing.width.size.min = 0
-        defaultLayout.sizing.width.size.max = ui.MAXFLOAT
+        defaultLayout.sizing.width.size.max = 0
         defaultLayout.sizing.width.percent = 0
         defaultLayout.sizing.height.type = config.SIZING_FIT
         defaultLayout.sizing.height.size.min = 0
-        defaultLayout.sizing.height.size.max = ui.MAXFLOAT
+        defaultLayout.sizing.height.size.max = 0
         defaultLayout.sizing.height.percent = 0
         defaultLayout.padding.left = 0
         defaultLayout.padding.right = 0
@@ -1351,12 +1281,130 @@ terra ui.GetElementIdWithIndexFromChars(chars: &int8, length: int32, index: uint
     return hash.HashStringWithOffset(ui.StringFromChars(chars, length), index, 0)
 end
 
-terra ui.OpenElementWithIdCharsForContext(ctx: &ui.Context, chars: &int8, length: int32)
-    ui.OpenElementWithIdForContext(ctx, ui.GetElementIdFromChars(chars, length))
+terra ui.Context:applyElementDesc(desc: &config.ElementDesc) : bool
+    if desc == nil then return false end
+    var openElem = self:getOpenLayoutElement()
+    if openElem == nil then return false end
+    var flags = desc.flags
+
+    -- Hot path for the most common benchmark/UI case.
+    var layoutSharedFlags = [uint32](config.DESC_HAS_LAYOUT + config.DESC_HAS_SHARED)
+    if flags == layoutSharedFlags then
+        var layoutCfg = self:storeLayoutConfig(desc.layout)
+        if layoutCfg == nil then return false end
+        openElem.layoutConfig = layoutCfg
+
+        var sharedCfg = self:storeSharedConfig(desc.shared)
+        if sharedCfg == nil then return false end
+        var cfgUnion: config.ElementConfigUnion
+        cfgUnion.sharedConfig = sharedCfg
+        return self:attachElementConfig(cfgUnion, config.CONFIG_SHARED) ~= nil
+    end
+
+    var ok = true
+
+    if (flags and config.DESC_HAS_LAYOUT) ~= 0 then
+        var layoutCfg = self:storeLayoutConfig(desc.layout)
+        if layoutCfg == nil then return false end
+        openElem.layoutConfig = layoutCfg
+    end
+    if (flags and config.DESC_HAS_SHARED) ~= 0 then
+        var sharedCfg = self:storeSharedConfig(desc.shared)
+        if sharedCfg == nil then return false end
+        var cfgUnion: config.ElementConfigUnion
+        cfgUnion.sharedConfig = sharedCfg
+        if self:attachElementConfig(cfgUnion, config.CONFIG_SHARED) == nil then ok = false end
+    end
+    if (flags and config.DESC_HAS_BORDER) ~= 0 then
+        var borderCfg = self:storeBorderConfig(desc.border)
+        if borderCfg == nil then return false end
+        var cfgUnion: config.ElementConfigUnion
+        cfgUnion.borderConfig = borderCfg
+        if self:attachElementConfig(cfgUnion, config.CONFIG_BORDER) == nil then ok = false end
+    end
+    if (flags and config.DESC_HAS_CLIP) ~= 0 then
+        var clipCfg = self:storeClipConfig(desc.clip)
+        if clipCfg == nil then return false end
+        var cfgUnion: config.ElementConfigUnion
+        cfgUnion.clipConfig = clipCfg
+        if self:attachElementConfig(cfgUnion, config.CONFIG_CLIP) == nil then ok = false end
+    end
+    if (flags and config.DESC_HAS_ASPECT) ~= 0 then
+        var aspectCfg = self:storeAspectRatioConfig(desc.aspect)
+        if aspectCfg == nil then return false end
+        var cfgUnion: config.ElementConfigUnion
+        cfgUnion.aspectRatioConfig = aspectCfg
+        if self:attachElementConfig(cfgUnion, config.CONFIG_ASPECT) == nil then ok = false end
+    end
+    if (flags and config.DESC_HAS_IMAGE) ~= 0 then
+        var imageCfg = self:storeImageConfig(desc.image)
+        if imageCfg == nil then return false end
+        var cfgUnion: config.ElementConfigUnion
+        cfgUnion.imageConfig = imageCfg
+        if self:attachElementConfig(cfgUnion, config.CONFIG_IMAGE) == nil then ok = false end
+    end
+    if (flags and config.DESC_HAS_CUSTOM) ~= 0 then
+        var customCfg = self:storeCustomConfig(desc.custom)
+        if customCfg == nil then return false end
+        var cfgUnion: config.ElementConfigUnion
+        cfgUnion.customConfig = customCfg
+        if self:attachElementConfig(cfgUnion, config.CONFIG_CUSTOM) == nil then ok = false end
+    end
+    if (flags and config.DESC_HAS_FLOATING) ~= 0 then
+        var floatingCfg = self:storeFloatingConfig(desc.floating)
+        if floatingCfg == nil then return false end
+        var cfgUnion: config.ElementConfigUnion
+        cfgUnion.floatingConfig = floatingCfg
+        if self:attachElementConfig(cfgUnion, config.CONFIG_FLOATING) == nil then ok = false end
+    end
+    if (flags and config.DESC_HAS_PAINT) ~= 0 then
+        var paintCfg = self:storePaintConfig(desc.paint)
+        if paintCfg == nil then return false end
+        var cfgUnion: config.ElementConfigUnion
+        cfgUnion.paintConfig = paintCfg
+        if self:attachElementConfig(cfgUnion, config.CONFIG_PAINT) == nil then ok = false end
+    end
+    return ok
 end
 
-terra ui.OpenElementWithIdChars(chars: &int8, length: int32)
-    ui.OpenElementWithIdCharsForContext(ui.GetCurrentContext(), chars, length)
+terra ui.Context:openElementWithDesc(desc: &config.ElementDesc) : bool
+    if desc == nil then return false end
+    self:openElement()
+    if self.maxElementsExceeded then return false end
+    return self:applyElementDesc(desc)
+end
+
+terra ui.Context:openElementWithIdAndDesc(id: hash.ElementId, desc: &config.ElementDesc) : bool
+    if desc == nil then return false end
+    self:openElementWithId(id)
+    if self.maxElementsExceeded then return false end
+    return self:applyElementDesc(desc)
+end
+
+terra ui.OpenElementWithDescForContext(ctx: &ui.Context, desc: &config.ElementDesc) : bool
+    if ctx == nil then return false end
+    return ctx:openElementWithDesc(desc)
+end
+
+terra ui.OpenElementWithDesc(desc: &config.ElementDesc) : bool
+    return ui.OpenElementWithDescForContext(ui.GetCurrentContext(), desc)
+end
+
+terra ui.OpenElementWithIdAndDescForContext(ctx: &ui.Context, id: hash.ElementId, desc: &config.ElementDesc) : bool
+    if ctx == nil then return false end
+    return ctx:openElementWithIdAndDesc(id, desc)
+end
+
+terra ui.OpenElementWithIdAndDesc(id: hash.ElementId, desc: &config.ElementDesc) : bool
+    return ui.OpenElementWithIdAndDescForContext(ui.GetCurrentContext(), id, desc)
+end
+
+terra ui.OpenElementWithIdCharsAndDescForContext(ctx: &ui.Context, chars: &int8, length: int32, desc: &config.ElementDesc) : bool
+    return ui.OpenElementWithIdAndDescForContext(ctx, ui.GetElementIdFromChars(chars, length), desc)
+end
+
+terra ui.OpenElementWithIdCharsAndDesc(chars: &int8, length: int32, desc: &config.ElementDesc) : bool
+    return ui.OpenElementWithIdCharsAndDescForContext(ui.GetCurrentContext(), chars, length, desc)
 end
 
 terra ui.OpenTextElementWithIdCharsForContext(ctx: &ui.Context, idChars: &int8, idLength: int32, textChars: &int8, textLength: int32, textConfig: &config.TextConfig)
@@ -1381,209 +1429,6 @@ end
 
 terra ui.OpenTextElementWithLengthAndId(elementId: hash.ElementId, chars: &int8, length: int32, textConfig: &config.TextConfig)
     ui.OpenTextElementWithLengthAndIdForContext(ui.GetCurrentContext(), elementId, chars, length, textConfig)
-end
-
-terra ui.SetOpenElementLayoutConfigForContext(ctx: &ui.Context, cfg: config.LayoutConfig) : bool
-    if ctx == nil then return false end
-    var elem = ctx:getOpenLayoutElement()
-    if elem == nil then return false end
-    var layoutCfg = ctx:storeLayoutConfig(cfg)
-    if layoutCfg == nil then return false end
-    elem.layoutConfig = layoutCfg
-    return true
-end
-
-terra ui.SetOpenElementLayoutConfig(cfg: config.LayoutConfig) : bool
-    return ui.SetOpenElementLayoutConfigForContext(ui.GetCurrentContext(), cfg)
-end
-
-terra ui.AttachSharedConfigForContext(ctx: &ui.Context, cfg: config.SharedConfig) : bool
-    if ctx == nil then return false end
-    var sharedCfg = ctx:storeSharedConfig(cfg)
-    if sharedCfg == nil then return false end
-    var cfgUnion: config.ElementConfigUnion
-    cfgUnion.sharedConfig = sharedCfg
-    return ctx:attachElementConfig(cfgUnion, config.CONFIG_SHARED) ~= nil
-end
-
-terra ui.AttachSharedConfig(cfg: config.SharedConfig) : bool
-    return ui.AttachSharedConfigForContext(ui.GetCurrentContext(), cfg)
-end
-
-terra ui.AttachBorderConfigForContext(ctx: &ui.Context, cfg: config.BorderConfig) : bool
-    if ctx == nil then return false end
-    var borderCfg = ctx:storeBorderConfig(cfg)
-    if borderCfg == nil then return false end
-    var cfgUnion: config.ElementConfigUnion
-    cfgUnion.borderConfig = borderCfg
-    return ctx:attachElementConfig(cfgUnion, config.CONFIG_BORDER) ~= nil
-end
-
-terra ui.AttachBorderConfig(cfg: config.BorderConfig) : bool
-    return ui.AttachBorderConfigForContext(ui.GetCurrentContext(), cfg)
-end
-
-terra ui.AttachClipConfigForContext(ctx: &ui.Context, cfg: config.ClipConfig) : bool
-    if ctx == nil then return false end
-    var clipCfg = ctx:storeClipConfig(cfg)
-    if clipCfg == nil then return false end
-    var cfgUnion: config.ElementConfigUnion
-    cfgUnion.clipConfig = clipCfg
-    return ctx:attachElementConfig(cfgUnion, config.CONFIG_CLIP) ~= nil
-end
-
-terra ui.AttachClipConfig(cfg: config.ClipConfig) : bool
-    return ui.AttachClipConfigForContext(ui.GetCurrentContext(), cfg)
-end
-
-terra ui.AttachOverflowConfigForContext(ctx: &ui.Context, cfg: config.OverflowConfig) : bool
-    -- M1 groundwork: route overflow container declarations through the existing
-    -- ClipConfig pipeline. `OVERFLOW_CLIP` and `OVERFLOW_SCROLL` both enable
-    -- clipping on the corresponding axis; scroll behavior remains managed by the
-    -- existing scroll container/update APIs until dedicated overflow/scroll state
-    -- APIs land.
-    var clipCfg: config.ClipConfig
-    clipCfg.horizontal = cfg.xMode ~= config.OVERFLOW_VISIBLE
-    clipCfg.vertical = cfg.yMode ~= config.OVERFLOW_VISIBLE
-    clipCfg.childOffset.x = 0
-    clipCfg.childOffset.y = 0
-    return ui.AttachClipConfigForContext(ctx, clipCfg)
-end
-
-terra ui.AttachOverflowConfig(cfg: config.OverflowConfig) : bool
-    return ui.AttachOverflowConfigForContext(ui.GetCurrentContext(), cfg)
-end
-
-terra ui.AttachFloatingConfigForContext(ctx: &ui.Context, cfg: config.FloatingConfig) : bool
-    if ctx == nil then return false end
-    var floatingCfg = ctx:storeFloatingConfig(cfg)
-    if floatingCfg == nil then return false end
-    var cfgUnion: config.ElementConfigUnion
-    cfgUnion.floatingConfig = floatingCfg
-    return ctx:attachElementConfig(cfgUnion, config.CONFIG_FLOATING) ~= nil
-end
-
-terra ui.AttachFloatingConfig(cfg: config.FloatingConfig) : bool
-    return ui.AttachFloatingConfigForContext(ui.GetCurrentContext(), cfg)
-end
-
-terra ui.AttachAspectRatioConfigForContext(ctx: &ui.Context, cfg: config.AspectRatioConfig) : bool
-    if ctx == nil then return false end
-    var aspectCfg = ctx:storeAspectRatioConfig(cfg)
-    if aspectCfg == nil then return false end
-    var cfgUnion: config.ElementConfigUnion
-    cfgUnion.aspectRatioConfig = aspectCfg
-    return ctx:attachElementConfig(cfgUnion, config.CONFIG_ASPECT) ~= nil
-end
-
-terra ui.AttachAspectRatioConfig(cfg: config.AspectRatioConfig) : bool
-    return ui.AttachAspectRatioConfigForContext(ui.GetCurrentContext(), cfg)
-end
-
-terra ui.AttachImageConfigForContext(ctx: &ui.Context, cfg: config.ImageConfig) : bool
-    if ctx == nil then return false end
-    var imageCfg = ctx:storeImageConfig(cfg)
-    if imageCfg == nil then return false end
-    var cfgUnion: config.ElementConfigUnion
-    cfgUnion.imageConfig = imageCfg
-    return ctx:attachElementConfig(cfgUnion, config.CONFIG_IMAGE) ~= nil
-end
-
-terra ui.AttachImageConfig(cfg: config.ImageConfig) : bool
-    return ui.AttachImageConfigForContext(ui.GetCurrentContext(), cfg)
-end
-
-terra ui.AttachCustomConfigForContext(ctx: &ui.Context, cfg: config.CustomConfig) : bool
-    if ctx == nil then return false end
-    var customCfg = ctx:storeCustomConfig(cfg)
-    if customCfg == nil then return false end
-    var cfgUnion: config.ElementConfigUnion
-    cfgUnion.customConfig = customCfg
-    return ctx:attachElementConfig(cfgUnion, config.CONFIG_CUSTOM) ~= nil
-end
-
-terra ui.AttachCustomConfig(cfg: config.CustomConfig) : bool
-    return ui.AttachCustomConfigForContext(ui.GetCurrentContext(), cfg)
-end
-
-terra ui.AttachPaintConfigForContext(ctx: &ui.Context, cfg: config.PaintConfig) : bool
-    if ctx == nil then return false end
-    var paintCfg = ctx:storePaintConfig(cfg)
-    if paintCfg == nil then return false end
-    var cfgUnion: config.ElementConfigUnion
-    cfgUnion.paintConfig = paintCfg
-    return ctx:attachElementConfig(cfgUnion, config.CONFIG_PAINT) ~= nil
-end
-
-terra ui.AttachPaintConfig(cfg: config.PaintConfig) : bool
-    return ui.AttachPaintConfigForContext(ui.GetCurrentContext(), cfg)
-end
-
-terra ui.ApplyOpenElementConfigsForContext(ctx: &ui.Context, bundle: &config.NodeBuildConfigBundle) : bool
-    if ctx == nil then return false end
-    if bundle == nil then return true end
-
-    var ok = true
-    if bundle.layoutConfig ~= nil then
-        if not ui.SetOpenElementLayoutConfigForContext(ctx, @bundle.layoutConfig) then ok = false end
-    end
-    if bundle.sharedConfig ~= nil then
-        if not ui.AttachSharedConfigForContext(ctx, @bundle.sharedConfig) then ok = false end
-    end
-    if bundle.borderConfig ~= nil then
-        if not ui.AttachBorderConfigForContext(ctx, @bundle.borderConfig) then ok = false end
-    end
-    if bundle.clipConfig ~= nil then
-        if not ui.AttachClipConfigForContext(ctx, @bundle.clipConfig) then ok = false end
-    end
-    if bundle.aspectRatioConfig ~= nil then
-        if not ui.AttachAspectRatioConfigForContext(ctx, @bundle.aspectRatioConfig) then ok = false end
-    end
-    if bundle.imageConfig ~= nil then
-        if not ui.AttachImageConfigForContext(ctx, @bundle.imageConfig) then ok = false end
-    end
-    if bundle.customConfig ~= nil then
-        if not ui.AttachCustomConfigForContext(ctx, @bundle.customConfig) then ok = false end
-    end
-    if bundle.floatingConfig ~= nil then
-        if not ui.AttachFloatingConfigForContext(ctx, @bundle.floatingConfig) then ok = false end
-    end
-    if bundle.paintConfig ~= nil then
-        if not ui.AttachPaintConfigForContext(ctx, @bundle.paintConfig) then ok = false end
-    end
-    return ok
-end
-
-terra ui.ApplyOpenElementConfigs(bundle: &config.NodeBuildConfigBundle) : bool
-    return ui.ApplyOpenElementConfigsForContext(ui.GetCurrentContext(), bundle)
-end
-
-terra ui.OpenElementWithConfigBundleForContext(ctx: &ui.Context, bundle: &config.NodeBuildConfigBundle) : bool
-    if ctx == nil then return false end
-    ui.OpenElementForContext(ctx)
-    return ui.ApplyOpenElementConfigsForContext(ctx, bundle)
-end
-
-terra ui.OpenElementWithConfigBundle(bundle: &config.NodeBuildConfigBundle) : bool
-    return ui.OpenElementWithConfigBundleForContext(ui.GetCurrentContext(), bundle)
-end
-
-terra ui.OpenElementWithIdAndConfigBundleForContext(ctx: &ui.Context, elementId: hash.ElementId, bundle: &config.NodeBuildConfigBundle) : bool
-    if ctx == nil then return false end
-    ui.OpenElementWithIdForContext(ctx, elementId)
-    return ui.ApplyOpenElementConfigsForContext(ctx, bundle)
-end
-
-terra ui.OpenElementWithIdAndConfigBundle(elementId: hash.ElementId, bundle: &config.NodeBuildConfigBundle) : bool
-    return ui.OpenElementWithIdAndConfigBundleForContext(ui.GetCurrentContext(), elementId, bundle)
-end
-
-terra ui.OpenElementWithIdCharsAndConfigBundleForContext(ctx: &ui.Context, chars: &int8, length: int32, bundle: &config.NodeBuildConfigBundle) : bool
-    return ui.OpenElementWithIdAndConfigBundleForContext(ctx, ui.GetElementIdFromChars(chars, length), bundle)
-end
-
-terra ui.OpenElementWithIdCharsAndConfigBundle(chars: &int8, length: int32, bundle: &config.NodeBuildConfigBundle) : bool
-    return ui.OpenElementWithIdCharsAndConfigBundleForContext(ui.GetCurrentContext(), chars, length, bundle)
 end
 
 terra ui.GetElementId(idString: config.String) : hash.ElementId
@@ -1739,6 +1584,9 @@ terra ui.Context:decodeElementConfigs(elem: &layout.LayoutElement) : DecodedElem
 end
 
 terra ui.ElementIsOffscreen(ctx: &ui.Context, box: &config.BoundingBox) : bool
+    if ui.disableCulling then
+        return false
+    end
     return (box.x > ctx.layoutDimensions.width) or
            (box.y > ctx.layoutDimensions.height) or
            (box.x + box.width < 0) or
@@ -1827,8 +1675,9 @@ terra ui.MinMemorySize() : uint64
     total = total + uint64(maxElements) * uint64(sizeof(uint32)); allocations = allocations + 1
     total = total + uint64(maxElements * 4) * uint64(sizeof(uint32)); allocations = allocations + 1
     total = total + uint64(maxElements * 4) * uint64(sizeof(int32)); allocations = allocations + 1
+    total = total + uint64(maxElements * 4) * uint64(sizeof(uint32)); allocations = allocations + 1
     total = total + uint64(maxElements) * uint64(sizeof(config.BoundingBox)); allocations = allocations + 1
-    total = total + uint64(maxElements) * uint64(sizeof(bool)); allocations = allocations + 1
+    total = total + uint64(maxElements) * uint64(sizeof(uint32)); allocations = allocations + 1
 
     -- arena allocations are 64-byte aligned; reserve worst-case padding per allocation
     total = total + uint64(allocations) * 64 + 128
@@ -2758,7 +2607,7 @@ terra ui.Context:calculateFinalLayout()
                                 var currentElementIndex = self:findElementIndexById(currentElement.id)
                                 if currentElementIndex >= 0 and currentElementIndex < self.elementBoundingBoxes.capacity then
                                     self.elementBoundingBoxes.internalArray[currentElementIndex] = boundingBox
-                                    self.elementBoundingBoxValid.internalArray[currentElementIndex] = true
+                                    self.elementBoundingBoxGenerations.internalArray[currentElementIndex] = self.generation
                                 end
                                 
                                 var emitRectangle = false
@@ -3221,14 +3070,16 @@ terra ui.SetPointerStateForContext(ctx: &ui.Context, position: config.Vector2, p
             var elem = ctx.layoutElements:get(elemIndex)
             if elem ~= nil then
                 var mapIndex = ctx:findElementIndexById(elem.id)
-                if mapIndex >= 0 and mapIndex < ctx.elementBoundingBoxes.capacity and ctx.elementBoundingBoxValid.internalArray[mapIndex] then
+                if mapIndex >= 0 and mapIndex < ctx.elementBoundingBoxes.capacity and
+                   ctx.elementBoundingBoxGenerations.internalArray[mapIndex] == ctx.generation then
                     var box = ctx.elementBoundingBoxes.internalArray[mapIndex]
                     var inside = ui.PointInsideBox(position, box)
                     if inside and not ui.externalScrollHandlingEnabled then
                         var clipElementId = ctx.layoutElementClipElementIds:getValue(elemIndex)
                         if clipElementId ~= 0 then
                             var clipMapIndex = ctx:findElementIndexById([uint32](clipElementId))
-                            if clipMapIndex >= 0 and clipMapIndex < ctx.elementBoundingBoxes.capacity and ctx.elementBoundingBoxValid.internalArray[clipMapIndex] then
+                            if clipMapIndex >= 0 and clipMapIndex < ctx.elementBoundingBoxes.capacity and
+                               ctx.elementBoundingBoxGenerations.internalArray[clipMapIndex] == ctx.generation then
                                 var clipBox = ctx.elementBoundingBoxes.internalArray[clipMapIndex]
                                 if not ui.PointInsideBox(position, clipBox) then
                                     inside = false
@@ -3707,7 +3558,7 @@ terra ui.GetElementData(id: hash.ElementId) : config.ElementData
         return out
     end
 
-    if not ctx.elementBoundingBoxValid.internalArray[idx] then
+    if ctx.elementBoundingBoxGenerations.internalArray[idx] ~= ctx.generation then
         return out
     end
 
