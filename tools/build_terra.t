@@ -51,7 +51,7 @@ end
 
 os.execute("mkdir -p build")
 
-terralib.saveobj("build/libargile_bench.so", "sharedlibrary", api.exports, nil, nil, { fastmath = true })
+terralib.saveobj("build/libargile_bench.so", "sharedlibrary", api.exports)
 
 local ffi_text = gen_cdef(api.exports)
 local f = assert(io.open("build/argile_bench_api.lua", "w"))

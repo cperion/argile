@@ -40,9 +40,20 @@ make build-bench
 make bench-quick
 make bench
 make bench-stress
+make bench-c
+make bench-c-stress
 ```
 
-This compares `build/libargile_bench.so` vs `build/libclay_bench.so` and prints a final performance table.
+`bench*` runs LuaJIT FFI benchmarks using raw APIs on both sides: Argile via `ui.capi` (`build/libargile.so` + `build/argile_api_ffi.lua`) and Clay via canonical `clay.h` symbols from `build/libclay.so`.
+
+`bench*` runs in strict fair mode only: culling is disabled on both backends.
+An untimed LuaJIT preheat pass runs once per backend/function-signature before measured iterations to reduce first-trace skew.
+Each scenario is sampled multiple times with alternating backend order and median selection.
+LuaJIT GC is collected/stopped during timed loops and restarted afterward to reduce pause-driven outliers.
+Argile text measure is served by a native C callback (`build/libargile_runtime.so`) to match Clay's native callback path.
+The runner also enforces strict checksum parity and exits non-zero when any scenario differs.
+
+`bench-c*` runs the pure-C comparison harness (`build/bench_compare_c`) and uses the Terra-built benchmark shim (`build/libargile_bench.so`) for the Argile side.
 
 ## Layout Parity Harness
 

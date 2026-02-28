@@ -19,11 +19,18 @@ local g_height = global(int32, 1080)
 local g_probe_ids = global(ProbeIdBuffer)
 local g_probe_count = global(int32, 0)
 
-terra api.measure_text(text: ui.StringSlice, text_cfg: &ui.TextConfig, user_data: &opaque) : ui.Dimensions
-    var out: ui.Dimensions
-    out.width = [float](text.length * 8)
+terra api.measure_text(text: &ui.StringSlice, _text_cfg: &ui.TextConfig, _user_data: &opaque, out: &ui.Dimensions) : int32
+    if out == nil then
+        return 0
+    end
+
+    if text ~= nil then
+        out.width = [float](text.length * 8)
+    else
+        out.width = 0.0
+    end
     out.height = 16.0
-    return out
+    return 1
 end
 
 terra api.make_string(chars: &int8) : ui.String

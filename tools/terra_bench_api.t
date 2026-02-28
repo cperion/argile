@@ -12,15 +12,23 @@ local g_initialized = global(bool, false)
 local g_width = global(float, 800.0)
 local g_height = global(float, 600.0)
 
-terra api.measure_text(text: ui.StringSlice, text_cfg: &ui.TextConfig, user_data: &opaque) : ui.Dimensions
-    var out: ui.Dimensions
-    out.width = [float](text.length * 8)
+terra api.measure_text(text: &ui.StringSlice, text_cfg: &ui.TextConfig, _user_data: &opaque, out: &ui.Dimensions) : int32
+    if out == nil then
+        return 0
+    end
+
+    if text ~= nil then
+        out.width = [float](text.length * 8)
+    else
+        out.width = 0.0
+    end
+
     if text_cfg ~= nil and text_cfg.lineHeight > 0 then
         out.height = [float](text_cfg.lineHeight)
     else
         out.height = 16.0
     end
-    return out
+    return 1
 end
 
 terra api.configure_box(ctx: &ui.Context, elem: &ui.LayoutElement, w: float, h: float, r: float, g: float, b: float)
@@ -171,6 +179,7 @@ terra api.bench_init(width: int, height: int, max_elements: int, arena_bytes: in
         return 0
     end
 
+    ui.SetCullingEnabled(false)
     ui.SetMeasureTextFunction(api.measure_text, nil)
     g_initialized = true
     return 1

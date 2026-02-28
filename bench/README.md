@@ -1,10 +1,10 @@
 # Benchmark Harness
 
-Comprehensive LuaJIT-driven comparison suite for `clay.h` vs Argile.
+LuaJIT-driven comparison suite for Clay vs Argile using raw runtime APIs (no scenario wrapper exports).
 
 ## What It Benchmarks
 
-The runner executes realistic and stress workloads on both backends through the same C ABI:
+The runner executes equivalent workloads on both backends:
 
 - Flat layout: many fixed children
 - Deep layout: nested tree expansion (`depth x branch`)
@@ -17,7 +17,7 @@ Each scenario reports:
 
 - `ms/frame`
 - `FPS`
-- speedup (`Clay_time / Terra_time`)
+- speedup (`Clay_time / Argile_time`)
 - backend checksums (frame command totals)
 
 A final table and summary are printed at the end (average + geometric mean speedup, best/worst scenario).
@@ -30,11 +30,15 @@ A final table and summary are printed at the end (average + geometric mean speed
 
 Build outputs:
 
-- `build/libargile_bench.so`
-- `build/libclay_bench.so`
-- `build/argile_bench_api.lua`
+- `build/libargile.so`
+- `build/argile_api_ffi.lua`
+- `build/libclay.so`
+- `build/libargile_runtime.so`
 
-`build/argile_bench_api.lua` is generated automatically by `tools/build_terra.t` by inspecting the final Argile exported API table (`tools/terra_bench_api.t` -> `api.exports`).
+`bench/compare.lua` drives:
+
+- Argile through the runtime C API (`ui.capi`, `*ForContext` entry points, including `OpenElementWithConfigBundleForContext` in hot paths)
+- Clay through canonical `clay.h` APIs (`Clay_*` + macro-required internal `Clay__*` functions)
 
 ## Run
 
@@ -50,15 +54,13 @@ Profiles:
 - `heavy`: default comprehensive run
 - `stress`: larger arena + heavier workloads
 
-## API Contract
+### Strict Fairness
 
-Both libs export identical benchmark functions:
-
-- `bench_init(width, height, max_elements, arena_bytes)`
-- `bench_shutdown()`
-- `bench_frame_fixed_children(child_count)`
-- `bench_frame_nested(depth, branch)`
-- `bench_frame_text_rows(row_count)`
-- `bench_frame_dashboard(panel_count, widgets_per_panel)`
-- `bench_frame_clip_lists(list_count, rows_per_list)`
-- `bench_frame_stress_mixed(element_count)`
+Fair mode is always enabled in `bench/compare.lua`:
+- Clay culling is hard-disabled
+- Argile culling is hard-disabled
+- an untimed LuaJIT preheat pass runs once per backend/function-signature before measured iterations
+- each scenario runs multiple samples with alternating backend order and median selection
+- LuaJIT GC is collected/stopped during timed loops and restarted afterward
+- Argile text measure uses a native C callback (`libargile_runtime.so`) to match Clay's native callback path
+- the run fails if any scenario checksum differs (`strict parity`)

@@ -103,6 +103,7 @@ int bench_init(int width, int height, int max_elements, int arena_bytes) {
     }
     Clay_SetCurrentContext(ctx);
     Clay_SetMaxElementCount(max_elements);
+    Clay_SetCullingEnabled(false);
     Clay_SetMeasureTextFunction(bench_measure_text, NULL);
     return 1;
 }
